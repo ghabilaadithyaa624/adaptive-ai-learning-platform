@@ -39,7 +39,11 @@ export const users = pgTable("users", {
   goal: text("goal"),
   status: text("status").notNull().default("active"), // active | invited | suspended
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [uniqueIndex("users_email_idx").on(t.email)]);
+}, (t) => [
+  uniqueIndex("users_email_idx").on(t.email),
+  index("users_institution_idx").on(t.institutionId),
+  index("users_role_idx").on(t.role),
+]);
 
 export const sessions = pgTable("sessions", {
   id: serial("id").primaryKey(),
@@ -47,7 +51,11 @@ export const sessions = pgTable("sessions", {
   userId: integer("user_id").notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [uniqueIndex("sessions_token_idx").on(t.token)]);
+}, (t) => [
+  uniqueIndex("sessions_token_idx").on(t.token),
+  index("sessions_user_idx").on(t.userId),
+  index("sessions_expires_idx").on(t.expiresAt),
+]);
 
 /* ------------------------------------------------------------------ */
 /* Skills & question bank                                              */
@@ -201,11 +209,64 @@ export const mlModels = pgTable("ml_models", {
   name: text("name").notNull(),
   kind: text("kind").notNull().default("classifier"), // classifier | tracer | regressor | recommender
   version: text("version").notNull().default("1.0.0"),
+  // Reproducibility provenance: which data + feature definitions produced this model.
+  datasetVersion: text("dataset_version"), // signature of the training rows (count + span + checksum)
+  featureVersion: text("feature_version"), // version of the feature pipeline
   params: jsonb("params").$type<Record<string, unknown>>().notNull().default({}),
+  hyperparams: jsonb("hyperparams").$type<Record<string, unknown>>().notNull().default({}),
   metrics: jsonb("metrics").$type<Record<string, number>>().notNull().default({}),
   samples: integer("samples").notNull().default(0),
   trainedAt: timestamp("trained_at", { withTimezone: true }).notNull().defaultNow(),
+  evaluatedAt: timestamp("evaluated_at", { withTimezone: true }), // when held-out metrics were computed
 }, (t) => [uniqueIndex("ml_models_name_idx").on(t.name)]);
+
+/**
+ * Immutable evaluation history. Every retrain appends a row so we can compare a
+ * candidate against its predecessors and detect regressions over time — the
+ * `mlModels` row only holds the latest snapshot, this keeps the audit trail.
+ */
+export const modelEvaluations = pgTable("model_evaluations", {
+  id: serial("id").primaryKey(),
+  modelName: text("model_name").notNull(),
+  kind: text("kind").notNull().default("classifier"),
+  version: text("version").notNull(),
+  datasetVersion: text("dataset_version"),
+  featureVersion: text("feature_version"),
+  split: text("split").notNull().default("test"), // test | validation | train
+  metrics: jsonb("metrics").$type<Record<string, number>>().notNull().default({}),
+  detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}), // confusion matrix, reliability bins, comparison
+  hyperparams: jsonb("hyperparams").$type<Record<string, unknown>>().notNull().default({}),
+  samples: integer("samples").notNull().default(0),
+  trainedAt: timestamp("trained_at", { withTimezone: true }).notNull().defaultNow(),
+  evaluatedAt: timestamp("evaluated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("model_eval_name_idx").on(t.modelName),
+  index("model_eval_evaluated_idx").on(t.evaluatedAt),
+]);
+
+/* ------------------------------------------------------------------ */
+/* Security audit log                                                   */
+/* ------------------------------------------------------------------ */
+
+export const auditLogs = pgTable("audit_logs", {
+  id: serial("id").primaryKey(),
+  actorId: integer("actor_id"),
+  actorRole: text("actor_role"),
+  actorEmail: text("actor_email"),
+  action: text("action").notNull(), // auth.login | auth.register | student.read | user.update | ...
+  resource: text("resource"), // students | users | institutions | assessments | ...
+  resourceId: text("resource_id"),
+  targetStudentId: integer("target_student_id"),
+  institutionId: integer("institution_id"),
+  outcome: text("outcome").notNull().default("success"), // success | denied | failure
+  ip: text("ip"),
+  detail: text("detail"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("audit_actor_idx").on(t.actorId),
+  index("audit_action_idx").on(t.action),
+  index("audit_created_idx").on(t.createdAt),
+]);
 
 export const activityEvents = pgTable("activity_events", {
   id: serial("id").primaryKey(),
@@ -229,4 +290,6 @@ export type LearningPath = typeof learningPaths.$inferSelect;
 export type PathMilestone = typeof pathMilestones.$inferSelect;
 export type Recommendation = typeof recommendations.$inferSelect;
 export type MlModel = typeof mlModels.$inferSelect;
+export type ModelEvaluation = typeof modelEvaluations.$inferSelect;
 export type ActivityEvent = typeof activityEvents.$inferSelect;
+export type AuditLog = typeof auditLogs.$inferSelect;

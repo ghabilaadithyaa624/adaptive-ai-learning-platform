@@ -8,6 +8,7 @@ import {
   learningPaths,
   masteryStates,
   mlModels,
+  modelEvaluations,
   pathMilestones,
   questions,
   recommendations,
@@ -335,12 +336,18 @@ export async function getStudentPerformance(studentId: number, mastery: MasteryV
   };
 }
 
-export async function getPaths(studentId?: number) {
+export async function getPaths(studentId?: number, studentIds?: number[]) {
+  if (studentIds && studentIds.length === 0) return [];
   const pathRows = await db
     .select({ path: learningPaths, studentName: users.name, avatarColor: users.avatarColor })
     .from(learningPaths)
     .innerJoin(users, eq(users.id, learningPaths.studentId))
-    .where(studentId ? eq(learningPaths.studentId, studentId) : undefined)
+    .where(
+      and(
+        studentId ? eq(learningPaths.studentId, studentId) : undefined,
+        studentIds ? inArray(learningPaths.studentId, studentIds) : undefined,
+      ),
+    )
     .orderBy(desc(learningPaths.createdAt));
 
   const ids = pathRows.map((row) => row.path.id);
@@ -373,7 +380,10 @@ export async function getPaths(studentId?: number) {
 
 export type PathView = Awaited<ReturnType<typeof getPaths>>[number];
 
-export async function getRecommendations(options: { studentId?: number; status?: string } = {}) {
+export async function getRecommendations(
+  options: { studentId?: number; status?: string; studentIds?: number[] } = {},
+) {
+  if (options.studentIds && options.studentIds.length === 0) return [] as never[];
   const rows = await db
     .select({
       recommendation: recommendations,
@@ -389,6 +399,7 @@ export async function getRecommendations(options: { studentId?: number; status?:
     .where(
       and(
         options.studentId ? eq(recommendations.studentId, options.studentId) : undefined,
+        options.studentIds ? inArray(recommendations.studentId, options.studentIds) : undefined,
         options.status ? eq(recommendations.status, options.status) : undefined,
       ),
     )
@@ -409,12 +420,18 @@ export async function getRecommendations(options: { studentId?: number; status?:
 
 export type RecommendationView = Awaited<ReturnType<typeof getRecommendations>>[number];
 
-export async function listAssessments(studentId?: number, limit = 60) {
+export async function listAssessments(studentId?: number, limit = 60, studentIds?: number[]) {
+  if (studentIds && studentIds.length === 0) return [] as never[];
   const rows = await db
     .select({ assessment: assessments, studentName: users.name, avatarColor: users.avatarColor })
     .from(assessments)
     .innerJoin(users, eq(users.id, assessments.studentId))
-    .where(studentId ? eq(assessments.studentId, studentId) : undefined)
+    .where(
+      and(
+        studentId ? eq(assessments.studentId, studentId) : undefined,
+        studentIds ? inArray(assessments.studentId, studentIds) : undefined,
+      ),
+    )
     .orderBy(desc(assessments.startedAt))
     .limit(limit);
 
@@ -500,13 +517,19 @@ export async function getAssessment(id: number) {
   };
 }
 
-export async function getActivity(studentId?: number, limit = 12) {
+export async function getActivity(studentId?: number, limit = 12, studentIds?: number[]) {
+  if (studentIds && studentIds.length === 0) return [] as never[];
   const rows = await db
     .select({ event: activityEvents, studentName: users.name, skillName: skills.name })
     .from(activityEvents)
     .leftJoin(users, eq(users.id, activityEvents.studentId))
     .leftJoin(skills, eq(skills.id, activityEvents.skillId))
-    .where(studentId ? eq(activityEvents.studentId, studentId) : undefined)
+    .where(
+      and(
+        studentId ? eq(activityEvents.studentId, studentId) : undefined,
+        studentIds ? inArray(activityEvents.studentId, studentIds) : undefined,
+      ),
+    )
     .orderBy(desc(activityEvents.createdAt))
     .limit(limit);
   return rows.map((row) => ({
@@ -519,15 +542,32 @@ export async function getActivity(studentId?: number, limit = 12) {
 
 export type ActivityView = Awaited<ReturnType<typeof getActivity>>[number];
 
-export async function getCohortSnapshot() {
-  const [studentRows, masteryRows, assessmentRows, recommendationRows, pathRows, institutionRows] = await Promise.all([
-    db.select({ id: users.id, name: users.name, cohort: users.cohort, avatarColor: users.avatarColor }).from(users).where(eq(users.role, "student")),
+export async function getCohortSnapshot(institutionId?: number) {
+  const studentRows = await db
+    .select({ id: users.id, name: users.name, cohort: users.cohort, avatarColor: users.avatarColor })
+    .from(users)
+    .where(
+      and(eq(users.role, "student"), institutionId !== undefined ? eq(users.institutionId, institutionId) : undefined),
+    );
+  // When scoped to an institution, restrict all downstream data to that
+  // institution's learners so a tenant admin never sees cross-tenant metrics.
+  const scopedIds = institutionId !== undefined ? studentRows.map((row) => row.id) : null;
+  const inScope = <T extends { studentId: number }>(rows: T[]) =>
+    scopedIds === null ? rows : rows.filter((row) => scopedIds.includes(row.studentId));
+
+  const [masteryRowsAll, assessmentRowsAll, recommendationRowsAll, pathRowsAll, institutionRows] = await Promise.all([
     db.select().from(masteryStates),
     db.select().from(assessments),
     db.select().from(recommendations),
     db.select().from(learningPaths),
-    db.select().from(institutions),
+    institutionId !== undefined
+      ? db.select().from(institutions).where(eq(institutions.id, institutionId))
+      : db.select().from(institutions),
   ]);
+  const masteryRows = inScope(masteryRowsAll);
+  const assessmentRows = inScope(assessmentRowsAll);
+  const recommendationRows = inScope(recommendationRowsAll);
+  const pathRows = inScope(pathRowsAll);
 
   const skillRows = await db.select({ id: skills.id, name: skills.name }).from(skills);
   const skillName = new Map(skillRows.map((row) => [row.id, row.name]));
@@ -586,15 +626,18 @@ export async function getCohortSnapshot() {
 
 export type CohortSnapshot = Awaited<ReturnType<typeof getCohortSnapshot>>;
 
-export async function getUserDirectory(search?: string) {
+export async function getUserDirectory(search?: string, institutionId?: number) {
   const rows = await db
     .select({ user: users, institutionName: institutions.name })
     .from(users)
     .leftJoin(institutions, eq(institutions.id, users.institutionId))
     .where(
-      search
-        ? or(sql`lower(${users.name}) like ${`%${search.toLowerCase()}%`}`, sql`lower(${users.email}) like ${`%${search.toLowerCase()}%`}`)
-        : undefined,
+      and(
+        search
+          ? or(sql`lower(${users.name}) like ${`%${search.toLowerCase()}%`}`, sql`lower(${users.email}) like ${`%${search.toLowerCase()}%`}`)
+          : undefined,
+        institutionId !== undefined ? eq(users.institutionId, institutionId) : undefined,
+      ),
     )
     .orderBy(users.role, users.name);
   return rows.map((row) => ({
@@ -614,8 +657,12 @@ export async function getUserDirectory(search?: string) {
 
 export type DirectoryUser = Awaited<ReturnType<typeof getUserDirectory>>[number];
 
-export async function getInstitutionList() {
-  const rows = await db.select().from(institutions).orderBy(institutions.name);
+export async function getInstitutionList(institutionId?: number) {
+  const rows = await db
+    .select()
+    .from(institutions)
+    .where(institutionId !== undefined ? eq(institutions.id, institutionId) : undefined)
+    .orderBy(institutions.name);
   const counts = await db
     .select({ institutionId: users.institutionId, total: sql<number>`count(*)::int` })
     .from(users)
@@ -635,10 +682,29 @@ export async function getModelRegistry() {
   return rows.map((row) => ({
     ...row,
     trainedAt: row.trainedAt.toISOString(),
+    evaluatedAt: row.evaluatedAt ? row.evaluatedAt.toISOString() : null,
   }));
 }
 
 export type ModelView = Awaited<ReturnType<typeof getModelRegistry>>[number];
+
+export async function getModelEvaluations(modelName?: string, limit = 20) {
+  const rows = modelName
+    ? await db
+        .select()
+        .from(modelEvaluations)
+        .where(eq(modelEvaluations.modelName, modelName))
+        .orderBy(desc(modelEvaluations.evaluatedAt))
+        .limit(limit)
+    : await db.select().from(modelEvaluations).orderBy(desc(modelEvaluations.evaluatedAt)).limit(limit);
+  return rows.map((row) => ({
+    ...row,
+    trainedAt: row.trainedAt.toISOString(),
+    evaluatedAt: row.evaluatedAt.toISOString(),
+  }));
+}
+
+export type ModelEvaluationView = Awaited<ReturnType<typeof getModelEvaluations>>[number];
 
 export async function getStudentDetail(studentId: number) {
   const rows = await db
@@ -703,11 +769,16 @@ export async function getStudentDetail(studentId: number) {
 
 export type StudentDetail = NonNullable<Awaited<ReturnType<typeof getStudentDetail>>>;
 
-export async function getStudentOptions() {
+export async function getStudentOptions(institutionId?: number) {
   const rows = await db
     .select({ id: users.id, name: users.name, cohort: users.cohort, avatarColor: users.avatarColor })
     .from(users)
-    .where(eq(users.role, "student"))
+    .where(
+      and(
+        eq(users.role, "student"),
+        institutionId !== undefined ? eq(users.institutionId, institutionId) : undefined,
+      ),
+    )
     .orderBy(users.name);
   return rows;
 }

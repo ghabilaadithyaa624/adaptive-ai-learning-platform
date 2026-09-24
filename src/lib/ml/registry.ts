@@ -1,17 +1,40 @@
 /** Model registry: persistence + retraining against live response data. */
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { assessments, assessmentItems, masteryStates, mlModels, questions } from "@/db/schema";
+import { assessments, assessmentItems, masteryStates, mlModels, modelEvaluations, questions } from "@/db/schema";
 import {
+  FEATURE_VERSION,
   HEURISTIC_MODEL,
   extractFeatures,
-  trainClassifier,
+  trainClassifierDetailed,
   type ClassifierModel,
 } from "./classifier";
+import { chronologicalSplit } from "./splits";
+import { decidePromotion, type PromotionDecision } from "./model-compare";
+import { adaptiveSelector, DEFAULT_SELECTION_WEIGHTS, PREREQ_GATE } from "./selection";
+import { bktModel } from "./models/bkt";
+import { irtModel } from "./models/irt";
+import { bayesianModel } from "./models/bayesian";
 import { mean } from "@/lib/utils";
 
 export const CLASSIFIER_NAME = "difficulty-classifier";
 export const TRACER_NAME = "bkt-knowledge-tracer";
+export const POLICY_NAME = "adaptive-selector";
+
+/** Deterministic signature of a training dataset (count + time span + checksum). */
+export function datasetSignature(rows: { createdAt: Date | string; y: number }[]): string {
+  if (!rows.length) return "empty";
+  const times = rows.map((r) => new Date(r.createdAt).getTime());
+  const min = Math.min(...times);
+  const max = Math.max(...times);
+  // order-independent, value-sensitive checksum
+  let checksum = 0;
+  for (let i = 0; i < rows.length; i += 1) {
+    checksum = (checksum + (rows[i].y + 1) * (i + 1) * 2654435761) % 1_000_000_007;
+  }
+  const spanDays = Math.round((max - min) / 86_400_000);
+  return `n${rows.length}-span${spanDays}d-c${checksum.toString(36)}`;
+}
 
 export async function loadClassifier(): Promise<ClassifierModel> {
   try {
@@ -37,6 +60,10 @@ export async function loadClassifier(): Promise<ClassifierModel> {
         precision: row.metrics.precision ?? 0,
         recall: row.metrics.recall ?? 0,
         testSize: row.metrics.testSize ?? 0,
+        f1: row.metrics.f1 ?? 0,
+        prAuc: row.metrics.prAuc ?? 0,
+        ece: row.metrics.ece ?? 0,
+        mce: row.metrics.mce ?? 0,
       },
     };
   } catch {
@@ -44,20 +71,31 @@ export async function loadClassifier(): Promise<ClassifierModel> {
   }
 }
 
-export async function saveClassifier(model: ClassifierModel) {
+export async function saveClassifier(
+  model: ClassifierModel,
+  provenance: {
+    datasetVersion?: string;
+    hyperparams?: Record<string, unknown>;
+    evaluatedAt?: Date;
+  } = {},
+) {
   const payload = {
     name: CLASSIFIER_NAME,
     kind: "classifier",
     version: model.version,
+    datasetVersion: provenance.datasetVersion ?? null,
+    featureVersion: FEATURE_VERSION,
     params: {
       featureNames: model.featureNames,
       weights: model.weights,
       means: model.means,
       stds: model.stds,
     } as Record<string, unknown>,
+    hyperparams: (provenance.hyperparams ?? {}) as Record<string, unknown>,
     metrics: { ...model.metrics } as Record<string, number>,
     samples: model.samples,
     trainedAt: new Date(),
+    evaluatedAt: provenance.evaluatedAt ?? new Date(),
   };
   await db
     .insert(mlModels)
@@ -73,6 +111,35 @@ export async function saveTracerSnapshot(summary: Record<string, number>, sample
     params: { slip: 0.1, guess: 0.2, learn: 0.22, forget: 0.035 } as Record<string, unknown>,
     metrics: summary,
     samples,
+    trainedAt: new Date(),
+  };
+  await db
+    .insert(mlModels)
+    .values(payload)
+    .onConflictDoUpdate({ target: mlModels.name, set: payload });
+}
+
+/**
+ * Register the adaptive selection policy so the model registry reflects the
+ * upgraded engine: which selector is live, its tunable weights, the prerequisite
+ * gate, and the pluggable knowledge/response models it can run against.
+ */
+export async function saveAdaptivePolicySnapshot() {
+  const payload = {
+    name: POLICY_NAME,
+    kind: "recommender",
+    version: adaptiveSelector.id,
+    params: {
+      selector: adaptiveSelector.id,
+      weights: DEFAULT_SELECTION_WEIGHTS,
+      prereqGate: PREREQ_GATE,
+      responseModel: "logistic-regression",
+      knowledgeModels: [bktModel.id, irtModel.id, bayesianModel.id],
+      learnerSignals: 15,
+      selectionCriteria: 10,
+    } as Record<string, unknown>,
+    metrics: { learnerSignals: 15, selectionCriteria: 10, knowledgeModels: 3 } as Record<string, number>,
+    samples: 0,
     trainedAt: new Date(),
   };
   await db
@@ -147,11 +214,42 @@ export async function trainAndPersistClassifier() {
       running.set(key, { attempts: stats.attempts + 1, correct: stats.correct + outcome });
       serviceRanking.set(row.studentId, [...history, row.masteryBefore].slice(-20));
 
-      return { x: features, y: outcome };
+      return { x: features, y: outcome, createdAt: row.createdAt as Date };
     });
 
-  const model = trainClassifier(trainingRows, { epochs: 1400, learningRate: 0.4, l2: 0.003 });
-  await saveClassifier(model);
+  const hyperparams = { epochs: 1400, learningRate: 0.4, l2: 0.003, trainRatio: 0.7, valRatio: 0.15 };
+  const datasetVersion = datasetSignature(trainingRows);
+
+  // Temporal (chronological) split — the leakage guard. The classifier only ever
+  // sees the past; the reported metrics come from the most-recent held-out block.
+  const split = chronologicalSplit(trainingRows, (r) => r.createdAt, {
+    trainRatio: hyperparams.trainRatio,
+    valRatio: hyperparams.valRatio,
+  });
+
+  const { model, evaluation, metricsOutOfSample } = trainClassifierDetailed(split.train, {
+    epochs: hyperparams.epochs,
+    learningRate: hyperparams.learningRate,
+    l2: hyperparams.l2,
+    evalRows: split.test,
+  });
+
+  const promotion = await recordClassifierEvaluation({
+    model,
+    datasetVersion,
+    hyperparams,
+    heldOutSamples: split.test.length,
+    detail: {
+      metricsOutOfSample,
+      split: { train: split.train.length, validation: split.validation.length, test: split.test.length },
+      confusion: evaluation?.confusion ?? null,
+      reliability: evaluation?.reliability ?? null,
+      rocAucApplicable: evaluation?.rocAucApplicable ?? false,
+      prAucApplicable: evaluation?.prAucApplicable ?? false,
+    },
+  });
+
+  await saveClassifier(model, { datasetVersion, hyperparams, evaluatedAt: new Date() });
 
   const tracerSummary = {
     trackedPairs: abilityRows.length,
@@ -162,6 +260,56 @@ export async function trainAndPersistClassifier() {
     responses: rows.length,
   };
   await saveTracerSnapshot(tracerSummary, rows.length);
+  await saveAdaptivePolicySnapshot();
 
-  return model;
+  return { model, promotion, datasetVersion, featureVersion: FEATURE_VERSION, heldOutSamples: split.test.length };
+}
+
+/**
+ * Append an evaluation row and compare the candidate against the most recent
+ * previous evaluation to detect improvement / regression. The comparison is
+ * evidence-gated: we never claim "better" without a held-out win on the primary
+ * metric, sufficient samples, and no guarded-metric regression.
+ */
+export async function recordClassifierEvaluation(params: {
+  model: ClassifierModel;
+  datasetVersion: string;
+  hyperparams: Record<string, unknown>;
+  heldOutSamples: number;
+  detail: Record<string, unknown>;
+}): Promise<PromotionDecision> {
+  const priorRows = await db
+    .select()
+    .from(modelEvaluations)
+    .where(eq(modelEvaluations.modelName, CLASSIFIER_NAME))
+    .orderBy(desc(modelEvaluations.evaluatedAt))
+    .limit(1);
+  const baseline = priorRows[0]?.metrics ?? null;
+
+  const promotion = decidePromotion({
+    candidate: params.model.metrics,
+    baseline,
+    primaryMetric: "auc", // ROC-AUC is the primary discrimination metric
+    candidateSamples: params.heldOutSamples,
+    minSamples: 30,
+    minImprovement: 0.005,
+    guardedMetrics: ["auc", "logLoss", "brier", "ece", "accuracy"],
+  });
+
+  await db.insert(modelEvaluations).values({
+    modelName: CLASSIFIER_NAME,
+    kind: "classifier",
+    version: params.model.version,
+    datasetVersion: params.datasetVersion,
+    featureVersion: FEATURE_VERSION,
+    split: "test",
+    metrics: { ...params.model.metrics } as Record<string, number>,
+    detail: { ...params.detail, promotion } as Record<string, unknown>,
+    hyperparams: params.hyperparams as Record<string, unknown>,
+    samples: params.heldOutSamples,
+    trainedAt: new Date(),
+    evaluatedAt: new Date(),
+  });
+
+  return promotion;
 }

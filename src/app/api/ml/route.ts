@@ -1,20 +1,26 @@
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { assessmentItems, questions, skills } from "@/db/schema";
-import { fail, ok, toNumber, withUser } from "@/lib/api";
+import { ok, toNumber, withAuth } from "@/lib/api";
 import { loadSkillFeatures } from "@/lib/engine";
 import { labelPrediction, predictProbability } from "@/lib/ml/classifier";
+import { evaluateClassification } from "@/lib/ml/evaluation";
 import { loadClassifier, trainAndPersistClassifier } from "@/lib/ml/registry";
-import { getModelRegistry } from "@/lib/queries";
+import { getModelEvaluations, getModelRegistry } from "@/lib/queries";
 import { round } from "@/lib/utils";
+import { badRequest } from "@/lib/http";
+import { oneOf, readJsonBody } from "@/lib/validation";
+import { assertStudentAccess, requireCapability } from "@/lib/authz";
+import { recordAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
 const DIFFICULTY_VALUE: Record<string, number> = { easy: 0.3, medium: 0.55, hard: 0.75, expert: 0.9 };
 const BLOOM_VALUE: Record<string, number> = { remember: 1, understand: 2, apply: 3, analyze: 4, evaluate: 5, create: 6 };
 
-export async function GET() {
-  return withUser(async () => {
+export async function GET(request: Request) {
+  return withAuth(request, async ({ user }) => {
+    requireCapability(user, "viewModels", "You do not have permission to view the model registry.", "ml.view");
     const [models, sampleRows] = await Promise.all([
       getModelRegistry(),
       db.select({ total: sql<number>`count(*)::int` }).from(assessmentItems),
@@ -24,28 +30,51 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  return withUser(async (user) => {
-    if (user.role === "student") return fail("Learners cannot retrain models.", 403);
-    const body = (await request.json()) as Record<string, unknown>;
-    const action = String(body.action ?? "train");
+  return withAuth(request, async ({ user, ip }) => {
+    requireCapability(user, "trainModels", "Learners cannot operate the model registry.", "ml.operate");
+    const body = await readJsonBody(request);
+    const action = oneOf(body.action, ["train", "predict", "evaluate"] as const, "action", "train");
 
     if (action === "train") {
-      const model = await trainAndPersistClassifier();
-      const models = await getModelRegistry();
+      const { model, promotion, datasetVersion, featureVersion, heldOutSamples } = await trainAndPersistClassifier();
+      const [models, evaluations] = await Promise.all([getModelRegistry(), getModelEvaluations("difficulty-classifier", 10)]);
+      await recordAudit({
+        actor: user,
+        action: "ml.train",
+        resource: "ml_models",
+        detail: `${model.version} · verdict=${promotion.verdict}`,
+        ip,
+      });
       return ok({
         model: {
           version: model.version,
           samples: model.samples,
           metrics: model.metrics,
+          datasetVersion,
+          featureVersion,
+          heldOutSamples,
+        },
+        // Evidence-gated verdict — never claims "better" without a held-out win.
+        comparison: {
+          verdict: promotion.verdict,
+          promote: promotion.promote,
+          reasons: promotion.reasons,
+          improvements: promotion.comparison.improvements,
+          regressions: promotion.comparison.regressions,
+          regressionAlerts: promotion.regressionAlerts.map((m) => ({ metric: m.metric, delta: m.delta })),
+          metrics: promotion.comparison.metrics,
         },
         models,
+        evaluations,
       });
     }
 
     if (action === "predict") {
       const studentId = toNumber(body.studentId, 0);
       let questionId = toNumber(body.questionId, 0);
-      if (!studentId) return fail("A learner is required for prediction.");
+      if (!studentId) throw badRequest("A learner is required for prediction.");
+      // Authorization: only predict for a learner in the caller's scope.
+      await assertStudentAccess(user, studentId, "ml.predict");
 
       let questionRow = null as null | typeof questions.$inferSelect;
       let skillName = "";
@@ -68,7 +97,7 @@ export async function POST(request: Request) {
         skillName = rows[0]?.skillName ?? "";
         questionId = questionRow?.id ?? 0;
       }
-      if (!questionRow) return fail("Question not found", 404);
+      if (!questionRow) throw badRequest("Question not found.");
 
       const skill = await loadSkillFeatures(studentId, questionRow.skillId);
       const model = await loadClassifier();
@@ -91,11 +120,7 @@ export async function POST(request: Request) {
           skillAccuracy: skill.skillAccuracy,
           evidence: skill.evidence,
         });
-        return {
-          name: scenario.name,
-          probability: round(probability, 3),
-          label: labelPrediction(probability),
-        };
+        return { name: scenario.name, probability: round(probability, 3), label: labelPrediction(probability) };
       });
 
       return ok({
@@ -111,29 +136,65 @@ export async function POST(request: Request) {
       });
     }
 
-    if (action === "evaluate") {
-      const rows = await db
-        .select({ isCorrect: assessmentItems.isCorrect, predicted: assessmentItems.predictedCorrectProb })
-        .from(assessmentItems)
-        .where(and(eq(assessmentItems.isCorrect, true)));
-      const all = await db
-        .select({ isCorrect: assessmentItems.isCorrect, predicted: assessmentItems.predictedCorrectProb })
-        .from(assessmentItems);
-      const evaluated = all.filter((row) => row.isCorrect !== null);
-      const correct = evaluated.filter((row) => row.isCorrect);
-      const accuracy = evaluated.length ? correct.length / evaluated.length : 0;
-      const meanPredicted = evaluated.length
-        ? evaluated.reduce((acc, row) => acc + row.predicted, 0) / evaluated.length
-        : 0;
-      return ok({
-        samples: evaluated.length,
-        observedAccuracy: round(accuracy, 3),
-        meanPredicted,
-        calibrationGap: round(meanPredicted - accuracy, 3),
-        truePositives: correct.length,
-      });
+    // evaluate — comprehensive report on the classifier's live serving predictions.
+    const all = await db
+      .select({
+        isCorrect: assessmentItems.isCorrect,
+        predicted: assessmentItems.predictedCorrectProb,
+        createdAt: assessmentItems.createdAt,
+      })
+      .from(assessmentItems)
+      .orderBy(assessmentItems.createdAt);
+    const evaluated = all.filter((row) => row.isCorrect !== null);
+    const labels = evaluated.map((row) => (row.isCorrect ? 1 : 0));
+    const scores = evaluated.map((row) => row.predicted);
+
+    if (!evaluated.length) {
+      return ok({ samples: 0, message: "No labelled responses to evaluate yet." });
     }
 
-    return fail("Unsupported action.");
+    const report = evaluateClassification(labels, scores);
+    // Temporal-holdout view: evaluate the most-recent 20% of served predictions,
+    // so operators see how the deployed model performs on the newest data.
+    const holdoutStart = Math.floor(evaluated.length * 0.8);
+    const recent = evaluated.slice(holdoutStart);
+    const recentReport = recent.length
+      ? evaluateClassification(recent.map((r) => (r.isCorrect ? 1 : 0)), recent.map((r) => r.predicted))
+      : null;
+
+    const evaluations = await getModelEvaluations("difficulty-classifier", 10);
+
+    return ok({
+      samples: evaluated.length,
+      // full metric coverage
+      metrics: {
+        accuracy: round(report.accuracy, 4),
+        precision: round(report.precision, 4),
+        recall: round(report.recall, 4),
+        f1: round(report.f1, 4),
+        specificity: round(report.specificity, 4),
+        rocAuc: report.rocAuc === null ? null : round(report.rocAuc, 4),
+        rocAucApplicable: report.rocAucApplicable,
+        prAuc: report.prAuc === null ? null : round(report.prAuc, 4),
+        prAucApplicable: report.prAucApplicable,
+        logLoss: round(report.logLoss, 4),
+        brier: round(report.brier, 4),
+        calibrationError: round(report.calibrationError, 4),
+        maxCalibrationError: round(report.maxCalibrationError, 4),
+        baseRate: round(report.baseRate, 4),
+      },
+      confusion: report.confusion,
+      reliability: report.reliability.filter((bin) => bin.count > 0),
+      recentHoldout: recentReport
+        ? {
+            samples: recentReport.samples,
+            accuracy: round(recentReport.accuracy, 4),
+            rocAuc: recentReport.rocAuc === null ? null : round(recentReport.rocAuc, 4),
+            logLoss: round(recentReport.logLoss, 4),
+            calibrationError: round(recentReport.calibrationError, 4),
+          }
+        : null,
+      history: evaluations,
+    });
   });
 }
