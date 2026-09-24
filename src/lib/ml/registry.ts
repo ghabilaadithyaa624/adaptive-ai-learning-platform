@@ -11,7 +11,10 @@ import {
 } from "./classifier";
 import { chronologicalSplit } from "./splits";
 import { decidePromotion, type PromotionDecision } from "./model-compare";
-import { adaptiveSelector, DEFAULT_SELECTION_WEIGHTS, PREREQ_GATE } from "./selection";
+import { DEFAULT_SELECTION_WEIGHTS, PREREQ_GATE } from "./selection";
+import { getSelectionStrategy, resolvePolicyId } from "./policy";
+import { resolvePolicyConfig, TUNING_PROVENANCE } from "./policy/weights";
+import { ALL_OBJECTIVES } from "./policy/types";
 import { bktModel } from "./models/bkt";
 import { irtModel } from "./models/irt";
 import { bayesianModel } from "./models/bayesian";
@@ -141,20 +144,42 @@ export async function saveTracerSnapshot(summary: Record<string, number>, sample
  * gate, and the pluggable knowledge/response models it can run against.
  */
 export async function saveAdaptivePolicySnapshot() {
+  const activePolicy = resolvePolicyId();
+  const strategy = getSelectionStrategy(activePolicy);
+  const config = resolvePolicyConfig();
   const payload = {
     name: POLICY_NAME,
     kind: "recommender",
-    version: adaptiveSelector.id,
+    version: strategy.id,
     params: {
-      selector: adaptiveSelector.id,
-      weights: DEFAULT_SELECTION_WEIGHTS,
-      prereqGate: PREREQ_GATE,
+      // Which policy is actually serving, and the exact configuration behind it,
+      // so a served decision can be reproduced from the registry alone.
+      activePolicy,
+      selector: strategy.id,
+      configFingerprint: config.fingerprint,
+      objectives: ALL_OBJECTIVES,
+      weights: activePolicy === "v3" ? config.normalizedWeights : DEFAULT_SELECTION_WEIGHTS,
+      rawWeights: activePolicy === "v3" ? config.weights : DEFAULT_SELECTION_WEIGHTS,
+      params: activePolicy === "v3" ? config.params : { prereqGate: PREREQ_GATE },
+      prereqGate: activePolicy === "v3" ? config.params.prereqGate : PREREQ_GATE,
+      tuning: {
+        method: TUNING_PROVENANCE.method,
+        objective: TUNING_PROVENANCE.objective,
+        trainSplit: TUNING_PROVENANCE.trainSplit,
+        priorUtility: TUNING_PROVENANCE.priorUtility,
+        tunedUtility: TUNING_PROVENANCE.tunedUtility,
+      },
       responseModel: "logistic-regression",
       knowledgeModels: [bktModel.id, irtModel.id, bayesianModel.id],
       learnerSignals: 15,
-      selectionCriteria: 10,
+      selectionCriteria: activePolicy === "v3" ? ALL_OBJECTIVES.length : 10,
     } as Record<string, unknown>,
-    metrics: { learnerSignals: 15, selectionCriteria: 10, knowledgeModels: 3 } as Record<string, number>,
+    metrics: {
+      learnerSignals: 15,
+      selectionCriteria: activePolicy === "v3" ? ALL_OBJECTIVES.length : 10,
+      knowledgeModels: 3,
+      tunedUtility: TUNING_PROVENANCE.tunedUtility,
+    } as Record<string, number>,
     samples: 0,
     trainedAt: new Date(),
   };

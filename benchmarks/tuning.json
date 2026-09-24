@@ -1,0 +1,1179 @@
+{
+  "schema": "adaptive.tuning.v1",
+  "objective": "under a 14-minute-per-session time budget (not an item budget): 0.6·rel(retained mastery gain) + 0.4·rel(immediate mastery gain) − 3·Σ max(0, relative regression − 2% tolerance) over [Mastery estimation RMSE, Serving Brier score, Calibration error (ECE), Prerequisite violation rate, Prerequisite-eligible skill coverage, ZPD hit rate, Repeated items]",
+  "weightGrid": [
+    0.6,
+    0.8,
+    1,
+    1.25,
+    1.6
+  ],
+  "paramGrids": {
+    "prereqGate": [
+      0.45,
+      0.5,
+      0.55,
+      0.6
+    ],
+    "prereqPessimismZ": [
+      0,
+      0.5,
+      0.75,
+      1,
+      1.25
+    ],
+    "maxPerSkill": [
+      3,
+      4,
+      5
+    ]
+  },
+  "passes": 2,
+  "trainCells": 20,
+  "evaluations": 133,
+  "durationMs": 49067,
+  "prior": {
+    "expectedMasteryGain": 0.22,
+    "zpdTargeting": 0.15,
+    "prerequisiteCorrectness": 0.14,
+    "informationGain": 0.12,
+    "uncertaintyReduction": 0.09,
+    "retention": 0.09,
+    "difficultyAppropriateness": 0.08,
+    "skillCoverage": 0.07,
+    "assessmentEfficiency": 0.04,
+    "repeatedExposure": 0.1,
+    "prerequisiteRisk": 0.25
+  },
+  "tuned": {
+    "expectedMasteryGain": 0.094,
+    "zpdTargeting": 0.209,
+    "prerequisiteCorrectness": 0.249,
+    "informationGain": 0.106,
+    "uncertaintyReduction": 0.039,
+    "retention": 0.16,
+    "difficultyAppropriateness": 0.071,
+    "skillCoverage": 0.037,
+    "assessmentEfficiency": 0.035,
+    "repeatedExposure": 0.1,
+    "prerequisiteRisk": 0.25
+  },
+  "priorParams": {
+    "prereqGate": 0.6,
+    "prereqPessimismZ": 0,
+    "maxPerSkill": 4
+  },
+  "tunedParams": {
+    "prereqGate": 0.6,
+    "prereqPessimismZ": 1.25,
+    "maxPerSkill": 3
+  },
+  "priorUtility": {
+    "utility": -0.7978007195344148,
+    "retainedGain": 0.75666,
+    "masteryGain": 0.25851,
+    "relRetained": -0.07138912411177797,
+    "relImmediate": -0.22648114901256727,
+    "penalty": 0.6643747854623211,
+    "breaches": [
+      {
+        "key": "brier",
+        "relative": -0.04301440416560543,
+        "cost": 0.06904321249681629
+      },
+      {
+        "key": "ece",
+        "relative": -0.04391967067200704,
+        "cost": 0.07175901201602113
+      },
+      {
+        "key": "zpdHitRate",
+        "relative": -0.19452418698316123,
+        "cost": 0.5235725609494837
+      }
+    ]
+  },
+  "tunedUtility": {
+    "utility": 0.0014866045457907588,
+    "retainedGain": 0.84913,
+    "masteryGain": 0.31434,
+    "relRetained": 0.042094670053876265,
+    "relImmediate": -0.05942549371633749,
+    "penalty": 0,
+    "breaches": []
+  },
+  "baselineMetrics": {
+    "itemsServed": 29.75,
+    "minutesSpent": 52.197,
+    "masteryGain": 0.3342,
+    "retainedGain": 0.81483,
+    "retainedMastery": 2.5275,
+    "retentionRatio": 3.06358,
+    "masteryGainPerItem": 0.01104,
+    "masteryGainPerMinute": 0.0064,
+    "zpdHitRate": 0.23339,
+    "wastedRate": 0.16826,
+    "avgInformation": 0.21235,
+    "prereqViolationRate": 0.54918,
+    "skillCoverage": 7.95,
+    "eligibleCoverage": 0.99,
+    "eligibleSkills": 4.2,
+    "coverageEntropy": 0.88035,
+    "estimationRmse": 0.34903,
+    "estimationBias": 0.30129,
+    "brier": 0.35337,
+    "ece": 0.35952,
+    "mce": 0.58286,
+    "skillsMastered": 0.15,
+    "missedEligible": 1,
+    "missedIneligible": 0,
+    "prereqViolations": 337,
+    "repeats": 0,
+    "masteryEvents": 3,
+    "itemsToMasterySum": 42,
+    "minutesToMasterySum": 76.92,
+    "censoredSkills": 145,
+    "cells": 20,
+    "itemsToMastery": 14,
+    "minutesToMastery": 25.64
+  },
+  "priorMetrics": {
+    "itemsServed": 25.6,
+    "minutesSpent": 51.3705,
+    "masteryGain": 0.25851,
+    "retainedGain": 0.75666,
+    "retainedMastery": 2.46932,
+    "retentionRatio": 3.91456,
+    "masteryGainPerItem": 0.00991,
+    "masteryGainPerMinute": 0.00501,
+    "zpdHitRate": 0.18799,
+    "wastedRate": 0.31738,
+    "avgInformation": 0.20832,
+    "prereqViolationRate": 0.48617,
+    "skillCoverage": 7.9,
+    "eligibleCoverage": 1,
+    "eligibleSkills": 4.2,
+    "coverageEntropy": 0.96546,
+    "estimationRmse": 0.3063,
+    "estimationBias": 0.19765,
+    "brier": 0.36857,
+    "ece": 0.37531,
+    "mce": 0.53472,
+    "skillsMastered": 0.1,
+    "missedEligible": 0,
+    "missedIneligible": 2,
+    "prereqViolations": 254,
+    "repeats": 0,
+    "masteryEvents": 2,
+    "itemsToMasterySum": 33,
+    "minutesToMasterySum": 66.5,
+    "censoredSkills": 146,
+    "cells": 20,
+    "itemsToMastery": 16.5,
+    "minutesToMastery": 33.25
+  },
+  "tunedMetrics": {
+    "itemsServed": 26.9,
+    "minutesSpent": 52.028,
+    "masteryGain": 0.31434,
+    "retainedGain": 0.84913,
+    "retainedMastery": 2.56179,
+    "retentionRatio": 3.80258,
+    "masteryGainPerItem": 0.01129,
+    "masteryGainPerMinute": 0.00602,
+    "zpdHitRate": 0.23111,
+    "wastedRate": 0.23745,
+    "avgInformation": 0.21252,
+    "prereqViolationRate": 0.32569,
+    "skillCoverage": 6.9,
+    "eligibleCoverage": 1,
+    "eligibleSkills": 4.2,
+    "coverageEntropy": 0.88415,
+    "estimationRmse": 0.27384,
+    "estimationBias": 0.16389,
+    "brier": 0.34806,
+    "ece": 0.34647,
+    "mce": 0.55218,
+    "skillsMastered": 0.25,
+    "missedEligible": 0,
+    "missedIneligible": 22,
+    "prereqViolations": 178,
+    "repeats": 0,
+    "masteryEvents": 5,
+    "itemsToMasterySum": 102,
+    "minutesToMasterySum": 215.99,
+    "censoredSkills": 143,
+    "cells": 20,
+    "itemsToMastery": 20.4,
+    "minutesToMastery": 43.198
+  },
+  "sensitivity": [
+    {
+      "knob": "expectedMasteryGain",
+      "down": -0.0083,
+      "up": -0.0074
+    },
+    {
+      "knob": "informationGain",
+      "down": -0.1517,
+      "up": -0.0095
+    },
+    {
+      "knob": "zpdTargeting",
+      "down": -0.1835,
+      "up": -0.1018
+    },
+    {
+      "knob": "prerequisiteCorrectness",
+      "down": -0.0541,
+      "up": -0.0154
+    },
+    {
+      "knob": "skillCoverage",
+      "down": -0.0035,
+      "up": -0.0096
+    },
+    {
+      "knob": "retention",
+      "down": 0.0028,
+      "up": -0.0363
+    },
+    {
+      "knob": "difficultyAppropriateness",
+      "down": -0.16,
+      "up": -0.4187
+    },
+    {
+      "knob": "uncertaintyReduction",
+      "down": -0.0036,
+      "up": -0.0202
+    },
+    {
+      "knob": "assessmentEfficiency",
+      "down": -0.1028,
+      "up": -0.0099
+    },
+    {
+      "knob": "repeatedExposure",
+      "down": -0.0204,
+      "up": -0.0289
+    },
+    {
+      "knob": "prerequisiteRisk",
+      "down": 0,
+      "up": 0
+    }
+  ],
+  "paramProfiles": [
+    {
+      "knob": "prereqGate",
+      "value": 0.45,
+      "utility": -0.4043
+    },
+    {
+      "knob": "prereqGate",
+      "value": 0.5,
+      "utility": -0.2714
+    },
+    {
+      "knob": "prereqGate",
+      "value": 0.55,
+      "utility": -0.0051
+    },
+    {
+      "knob": "prereqGate",
+      "value": 0.6,
+      "utility": 0.0015
+    },
+    {
+      "knob": "prereqPessimismZ",
+      "value": 0,
+      "utility": -0.4175
+    },
+    {
+      "knob": "prereqPessimismZ",
+      "value": 0.5,
+      "utility": -0.3181
+    },
+    {
+      "knob": "prereqPessimismZ",
+      "value": 0.75,
+      "utility": 0.0002
+    },
+    {
+      "knob": "prereqPessimismZ",
+      "value": 1,
+      "utility": 0
+    },
+    {
+      "knob": "prereqPessimismZ",
+      "value": 1.25,
+      "utility": 0.0015
+    },
+    {
+      "knob": "maxPerSkill",
+      "value": 3,
+      "utility": 0.0015
+    },
+    {
+      "knob": "maxPerSkill",
+      "value": 4,
+      "utility": -0.094
+    },
+    {
+      "knob": "maxPerSkill",
+      "value": 5,
+      "utility": -0.2043
+    }
+  ],
+  "steps": [
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "expectedMasteryGain",
+      "value": 0.6,
+      "utility": -0.6204,
+      "accepted": true
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "expectedMasteryGain",
+      "value": 0.8,
+      "utility": -0.8194,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "expectedMasteryGain",
+      "value": 1.25,
+      "utility": -0.7594,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "expectedMasteryGain",
+      "value": 1.6,
+      "utility": -0.7043,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "informationGain",
+      "value": 0.6,
+      "utility": -0.9316,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "informationGain",
+      "value": 0.8,
+      "utility": -0.6501,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "informationGain",
+      "value": 1.25,
+      "utility": -0.8457,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "informationGain",
+      "value": 1.6,
+      "utility": -0.892,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "zpdTargeting",
+      "value": 0.6,
+      "utility": -0.8654,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "zpdTargeting",
+      "value": 0.8,
+      "utility": -0.6444,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "zpdTargeting",
+      "value": 1.25,
+      "utility": -0.6072,
+      "accepted": true
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "zpdTargeting",
+      "value": 1.6,
+      "utility": -1.0853,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "prerequisiteCorrectness",
+      "value": 0.6,
+      "utility": -0.6443,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "prerequisiteCorrectness",
+      "value": 0.8,
+      "utility": -0.7171,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "prerequisiteCorrectness",
+      "value": 1.25,
+      "utility": -0.6034,
+      "accepted": true
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "prerequisiteCorrectness",
+      "value": 1.6,
+      "utility": -0.6241,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "skillCoverage",
+      "value": 0.6,
+      "utility": -0.6334,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "skillCoverage",
+      "value": 0.8,
+      "utility": -0.6258,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "skillCoverage",
+      "value": 1.25,
+      "utility": -0.7112,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "skillCoverage",
+      "value": 1.6,
+      "utility": -0.7314,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "retention",
+      "value": 0.6,
+      "utility": -0.6077,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "retention",
+      "value": 0.8,
+      "utility": -0.6177,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "retention",
+      "value": 1.25,
+      "utility": -0.5604,
+      "accepted": true
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "retention",
+      "value": 1.6,
+      "utility": -0.7208,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "difficultyAppropriateness",
+      "value": 0.6,
+      "utility": -0.9768,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "difficultyAppropriateness",
+      "value": 0.8,
+      "utility": -0.9337,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "difficultyAppropriateness",
+      "value": 1.25,
+      "utility": -0.7424,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "difficultyAppropriateness",
+      "value": 1.6,
+      "utility": -0.7839,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "uncertaintyReduction",
+      "value": 0.6,
+      "utility": -0.6031,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "uncertaintyReduction",
+      "value": 0.8,
+      "utility": -0.5217,
+      "accepted": true
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "uncertaintyReduction",
+      "value": 1.25,
+      "utility": -0.5444,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "uncertaintyReduction",
+      "value": 1.6,
+      "utility": -0.606,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "assessmentEfficiency",
+      "value": 0.6,
+      "utility": -0.7752,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "assessmentEfficiency",
+      "value": 0.8,
+      "utility": -0.709,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "assessmentEfficiency",
+      "value": 1.25,
+      "utility": -0.5434,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "assessmentEfficiency",
+      "value": 1.6,
+      "utility": -0.5965,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "repeatedExposure",
+      "value": 0.6,
+      "utility": -0.6199,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "repeatedExposure",
+      "value": 0.8,
+      "utility": -0.6675,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "repeatedExposure",
+      "value": 1.25,
+      "utility": -0.9432,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "repeatedExposure",
+      "value": 1.6,
+      "utility": -0.7219,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "prerequisiteRisk",
+      "value": 0.6,
+      "utility": -0.5217,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "prerequisiteRisk",
+      "value": 0.8,
+      "utility": -0.5217,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "prerequisiteRisk",
+      "value": 1.25,
+      "utility": -0.5217,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "weights",
+      "knob": "prerequisiteRisk",
+      "value": 1.6,
+      "utility": -0.5217,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "params",
+      "knob": "prereqGate",
+      "value": 0.45,
+      "utility": -0.5913,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "params",
+      "knob": "prereqGate",
+      "value": 0.5,
+      "utility": -0.5928,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "params",
+      "knob": "prereqGate",
+      "value": 0.55,
+      "utility": -0.5773,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "params",
+      "knob": "prereqPessimismZ",
+      "value": 0.5,
+      "utility": -0.5392,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "params",
+      "knob": "prereqPessimismZ",
+      "value": 0.75,
+      "utility": -0.4343,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "params",
+      "knob": "prereqPessimismZ",
+      "value": 1,
+      "utility": -0.2111,
+      "accepted": true
+    },
+    {
+      "pass": 1,
+      "stage": "params",
+      "knob": "prereqPessimismZ",
+      "value": 1.25,
+      "utility": -0.2905,
+      "accepted": false
+    },
+    {
+      "pass": 1,
+      "stage": "params",
+      "knob": "maxPerSkill",
+      "value": 3,
+      "utility": -0.0363,
+      "accepted": true
+    },
+    {
+      "pass": 1,
+      "stage": "params",
+      "knob": "maxPerSkill",
+      "value": 5,
+      "utility": -0.4958,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "expectedMasteryGain",
+      "value": 0.6,
+      "utility": -0.1355,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "expectedMasteryGain",
+      "value": 0.8,
+      "utility": -0.0356,
+      "accepted": true
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "expectedMasteryGain",
+      "value": 1.25,
+      "utility": -0.0615,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "expectedMasteryGain",
+      "value": 1.6,
+      "utility": -0.2027,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "informationGain",
+      "value": 0.6,
+      "utility": -0.2705,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "informationGain",
+      "value": 0.8,
+      "utility": -0.1145,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "informationGain",
+      "value": 1.25,
+      "utility": -0.0805,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "informationGain",
+      "value": 1.6,
+      "utility": -0.0663,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "zpdTargeting",
+      "value": 0.6,
+      "utility": -0.0285,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "zpdTargeting",
+      "value": 0.8,
+      "utility": -0.0414,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "zpdTargeting",
+      "value": 1.25,
+      "utility": -0.0248,
+      "accepted": true
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "zpdTargeting",
+      "value": 1.6,
+      "utility": -0.279,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "prerequisiteCorrectness",
+      "value": 0.6,
+      "utility": -0.1633,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "prerequisiteCorrectness",
+      "value": 0.8,
+      "utility": -0.0612,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "prerequisiteCorrectness",
+      "value": 1.25,
+      "utility": -0.0173,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "prerequisiteCorrectness",
+      "value": 1.6,
+      "utility": -0.0086,
+      "accepted": true
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "skillCoverage",
+      "value": 0.6,
+      "utility": -0.0026,
+      "accepted": true
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "skillCoverage",
+      "value": 0.8,
+      "utility": -0.0076,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "skillCoverage",
+      "value": 1.25,
+      "utility": -0.2034,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "skillCoverage",
+      "value": 1.6,
+      "utility": -0.2884,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "retention",
+      "value": 0.6,
+      "utility": -0.0397,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "retention",
+      "value": 0.8,
+      "utility": -0.0091,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "retention",
+      "value": 1.25,
+      "utility": -0.0111,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "retention",
+      "value": 1.6,
+      "utility": -0.0013,
+      "accepted": true
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "difficultyAppropriateness",
+      "value": 0.6,
+      "utility": -0.2997,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "difficultyAppropriateness",
+      "value": 0.8,
+      "utility": -0.068,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "difficultyAppropriateness",
+      "value": 1.25,
+      "utility": -0.2838,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "difficultyAppropriateness",
+      "value": 1.6,
+      "utility": -0.1045,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "uncertaintyReduction",
+      "value": 0.6,
+      "utility": 0,
+      "accepted": true
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "uncertaintyReduction",
+      "value": 0.8,
+      "utility": -0.0034,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "uncertaintyReduction",
+      "value": 1.25,
+      "utility": -0.0008,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "uncertaintyReduction",
+      "value": 1.6,
+      "utility": -0.0026,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "assessmentEfficiency",
+      "value": 0.6,
+      "utility": -0.3737,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "assessmentEfficiency",
+      "value": 0.8,
+      "utility": -0.0299,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "assessmentEfficiency",
+      "value": 1.25,
+      "utility": -0.0082,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "assessmentEfficiency",
+      "value": 1.6,
+      "utility": -0.0599,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "repeatedExposure",
+      "value": 0.6,
+      "utility": -0.1433,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "repeatedExposure",
+      "value": 0.8,
+      "utility": -0.0147,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "repeatedExposure",
+      "value": 1.25,
+      "utility": -0.0661,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "repeatedExposure",
+      "value": 1.6,
+      "utility": -0.1881,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "prerequisiteRisk",
+      "value": 0.6,
+      "utility": 0,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "prerequisiteRisk",
+      "value": 0.8,
+      "utility": 0,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "prerequisiteRisk",
+      "value": 1.25,
+      "utility": 0,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "weights",
+      "knob": "prerequisiteRisk",
+      "value": 1.6,
+      "utility": 0,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "params",
+      "knob": "prereqGate",
+      "value": 0.45,
+      "utility": -0.4156,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "params",
+      "knob": "prereqGate",
+      "value": 0.5,
+      "utility": -0.4415,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "params",
+      "knob": "prereqGate",
+      "value": 0.55,
+      "utility": -0.2428,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "params",
+      "knob": "prereqPessimismZ",
+      "value": 0,
+      "utility": -0.4175,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "params",
+      "knob": "prereqPessimismZ",
+      "value": 0.5,
+      "utility": -0.3181,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "params",
+      "knob": "prereqPessimismZ",
+      "value": 0.75,
+      "utility": 0.0002,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "params",
+      "knob": "prereqPessimismZ",
+      "value": 1.25,
+      "utility": 0.0015,
+      "accepted": true
+    },
+    {
+      "pass": 2,
+      "stage": "params",
+      "knob": "maxPerSkill",
+      "value": 4,
+      "utility": -0.094,
+      "accepted": false
+    },
+    {
+      "pass": 2,
+      "stage": "params",
+      "knob": "maxPerSkill",
+      "value": 5,
+      "utility": -0.2043,
+      "accepted": false
+    }
+  ]
+}

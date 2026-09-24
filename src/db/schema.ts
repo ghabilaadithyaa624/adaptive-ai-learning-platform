@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -424,6 +425,114 @@ export const activityEvents = pgTable("activity_events", {
   index("activity_created_idx").on(t.createdAt.desc()),
 ]);
 
+/* ------------------------------------------------------------------ */
+/* Experimentation                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A controlled comparison of adaptive-learning policies.
+ *
+ * `institution_id` is the tenant boundary: NULL means a platform-wide
+ * experiment, any other value scopes it to one institution. Every read path
+ * filters on it.
+ *
+ * `variants`, `eligibility` and the metric lists are JSONB because their shape
+ * is owned by `src/lib/experiments/types.ts` and validated there — the database
+ * stores the definition, the application enforces its semantics.
+ */
+export const experiments = pgTable("experiments", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull(),
+  name: text("name").notNull(),
+  hypothesis: text("hypothesis").notNull().default(""),
+  institutionId: integer("institution_id").references(() => institutions.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("draft"), // draft|scheduled|running|paused|completed|archived
+  variants: jsonb("variants").$type<unknown[]>().notNull().default([]),
+  eligibility: jsonb("eligibility").$type<Record<string, unknown>>().notNull().default({}),
+  primaryMetric: text("primary_metric").notNull(),
+  secondaryMetrics: jsonb("secondary_metrics").$type<string[]>().notNull().default([]),
+  assignmentStrategy: text("assignment_strategy").notNull().default("sticky"), // sticky | rolling
+  /** Hash salt — distinct per experiment so bucketing is uncorrelated across experiments. */
+  salt: text("salt").notNull(),
+  startAt: timestamp("start_at", { withTimezone: true }).notNull(),
+  endAt: timestamp("end_at", { withTimezone: true }),
+  /** Experiments sharing a group never enrol the same learner. */
+  exclusionGroup: text("exclusion_group"),
+  createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  // Keys are unique per tenant, so two institutions may both run "policy-v3-vs-v2".
+  //
+  // Two partial indexes rather than one composite: SQL treats NULLs as
+  // DISTINCT, so a plain unique index on (institution_id, key) would happily
+  // accept two platform-wide experiments with the same key — and then
+  // `getExperimentByKey` returns an arbitrary one of them. Splitting on
+  // nullness closes that hole without depending on Postgres 15's
+  // NULLS NOT DISTINCT.
+  uniqueIndex("experiments_tenant_key_idx")
+    .on(t.institutionId, t.key)
+    .where(sql`${t.institutionId} is not null`),
+  uniqueIndex("experiments_global_key_idx")
+    .on(t.key)
+    .where(sql`${t.institutionId} is null`),
+  index("experiments_status_idx").on(t.status),
+  index("experiments_institution_idx").on(t.institutionId),
+  index("experiments_window_idx").on(t.startAt, t.endAt),
+]);
+
+/**
+ * A learner's binding to one variant.
+ *
+ * The unique index on (experiment_id, student_id) is the database-level
+ * guarantee behind "one learner, one variant": even a race between two
+ * concurrent serving requests cannot produce two arms for the same learner.
+ * Assignment writes use ON CONFLICT DO NOTHING and re-read, so the first write
+ * wins and the loser adopts it.
+ */
+export const experimentAssignments = pgTable("experiment_assignments", {
+  id: serial("id").primaryKey(),
+  experimentId: integer("experiment_id").references(() => experiments.id, { onDelete: "cascade" }).notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  variantKey: text("variant_key").notNull(),
+  /** Config fingerprint at assignment time. */
+  configFingerprint: text("config_fingerprint").notNull(),
+  /** The uniform draw that produced the bucket — lets anyone re-verify the assignment. */
+  bucket: real("bucket").notNull(),
+  /** Frozen eligibility facts, so the population cannot drift at analysis time. */
+  eligibilitySnapshot: jsonb("eligibility_snapshot").$type<Record<string, unknown>>().notNull().default({}),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("experiment_assignment_unique_idx").on(t.experimentId, t.studentId),
+  index("experiment_assignment_variant_idx").on(t.experimentId, t.variantKey),
+  index("experiment_assignment_student_idx").on(t.studentId),
+]);
+
+/**
+ * One moment a learner actually experienced a variant.
+ *
+ * Separate from assignment because assignment alone must never license metric
+ * attribution — a learner enrolled but never served by the policy would
+ * otherwise contribute outcomes to an arm that never touched them. The first
+ * exposure timestamp is the clock every metric starts from.
+ */
+export const experimentExposures = pgTable("experiment_exposures", {
+  id: serial("id").primaryKey(),
+  experimentId: integer("experiment_id").references(() => experiments.id, { onDelete: "cascade" }).notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  variantKey: text("variant_key").notNull(),
+  /** Fingerprint actually in force when served — detects mid-run config edits. */
+  configFingerprint: text("config_fingerprint").notNull(),
+  surface: text("surface").notNull().default("assessment.next-item"),
+  /** Related domain row (assessment item id) for attribution joins. */
+  entityId: integer("entity_id"),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("experiment_exposure_lookup_idx").on(t.experimentId, t.studentId, t.occurredAt),
+  index("experiment_exposure_variant_idx").on(t.experimentId, t.variantKey),
+  index("experiment_exposure_entity_idx").on(t.entityId),
+]);
+
 export type User = typeof users.$inferSelect;
 export type Institution = typeof institutions.$inferSelect;
 export type Skill = typeof skills.$inferSelect;
@@ -441,3 +550,6 @@ export type ModelEvaluation = typeof modelEvaluations.$inferSelect;
 export type ActivityEvent = typeof activityEvents.$inferSelect;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type TutorInteraction = typeof tutorInteractions.$inferSelect;
+export type ExperimentRow = typeof experiments.$inferSelect;
+export type ExperimentAssignmentRow = typeof experimentAssignments.$inferSelect;
+export type ExperimentExposureRow = typeof experimentExposures.$inferSelect;

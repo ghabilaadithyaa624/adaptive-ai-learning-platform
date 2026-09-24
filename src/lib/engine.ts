@@ -15,11 +15,16 @@ import { labelPrediction, predictProbability, type FeatureSample } from "@/lib/m
 import { loadClassifier } from "@/lib/ml/registry";
 import { forecastPerformance } from "@/lib/ml/forecast";
 import { buildLearnerState, type RawResponse, type RawSkillState } from "@/lib/ml/learner-state";
-import { selectNextItemV2 } from "@/lib/ml/selection";
+import { getSelectionStrategy, resolvePolicyId } from "@/lib/ml/policy";
+import {
+  assignLearnerToActiveExperiments,
+  recordExposure,
+  strategyForConfig,
+} from "@/lib/experiments";
 import { LogisticResponseModel } from "@/lib/ml/models/logistic";
 import { bktModel } from "@/lib/ml/models/bkt";
-import { events, now } from "@/lib/observability";
-import type { CandidateItem } from "@/lib/ml/interfaces";
+import { events, log, now } from "@/lib/observability";
+import type { CandidateItem, DecisionExplanation } from "@/lib/ml/interfaces";
 import { SERVABLE_STATUSES } from "@/lib/questions/constants";
 import { MASTERY_TARGET, clamp, mean, round } from "@/lib/utils";
 
@@ -44,6 +49,13 @@ export type SessionQuestion = {
   label: { key: string; label: string; tone: string; hint: string };
   rationale: string;
   informationGain: number;
+  /**
+   * Machine-readable record of *why* this question was selected: every
+   * objective's raw/normalised value and weighted contribution, every gate that
+   * filtered candidates, the runner-up it beat and by how much. Persisted with
+   * the selection event so any served item can be audited after the fact.
+   */
+  decision: DecisionExplanation | null;
 };
 
 export async function loadSkillFeatures(studentId: number, skillId: number) {
@@ -185,6 +197,10 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
       label: labelPrediction(pending.predictedCorrectProb),
       rationale: "Resuming the item already queued for this session.",
       informationGain: round(pending.predictedCorrectProb * (1 - pending.predictedCorrectProb) * 4, 2),
+      // Resumed items were explained when they were first selected; the record
+      // lives on that original selection event rather than being re-derived
+      // against a learner state that has since moved on.
+      decision: null,
     };
   }
 
@@ -256,12 +272,63 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     askedBloomCounts.set(bloom, (askedBloomCounts.get(bloom) ?? 0) + 1);
   }
 
-  const { chosen } = selectNextItemV2({
+  // Serving policy is pluggable and resolved per request, so a tenant can pin
+  // v2 (or a weight preset) via configuration without a deploy. Default is v3 —
+  // see `benchmarks/RESULTS.md` §2 for the held-out evidence behind that default.
+  const policyId = resolvePolicyId();
+
+  // An active experiment overrides the configured default for enrolled
+  // learners. Assignment is deterministic and sticky, so a learner stays in one
+  // arm for the life of the experiment. Failures here must never break
+  // practice: if the experiment layer throws, the learner silently gets the
+  // platform default and contributes no exposure (and therefore no data).
+  let experimentArm: {
+    experimentId: number;
+    variantKey: string;
+    configFingerprint: string;
+  } | null = null;
+  let strategy = getSelectionStrategy(policyId);
+  let servingPolicyId: string = policyId;
+
+  try {
+    // Tenant scope comes from the learner's own institution, so an experiment
+    // scoped to one customer can never be applied to another's learner.
+    const [owner] = await db
+      .select({ institutionId: users.institutionId })
+      .from(users)
+      .where(eq(users.id, assessment.studentId))
+      .limit(1);
+    const decisions = await assignLearnerToActiveExperiments({
+      scope: { institutionId: owner?.institutionId ?? null },
+      studentId: assessment.studentId,
+      now: new Date(),
+    });
+    const assigned = decisions.find((d) => d.outcome === "assigned" && d.config);
+    if (assigned?.config) {
+      strategy = strategyForConfig(assigned.config);
+      servingPolicyId = assigned.config.policy;
+      experimentArm = {
+        experimentId: assigned.experimentId,
+        variantKey: assigned.variantKey!,
+        configFingerprint: assigned.config.fingerprint,
+      };
+    }
+  } catch (error) {
+    log.warn("experiment.assignment_failed", {
+      assessmentId,
+      studentId: assessment.studentId,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+  }
+
+  const { chosen } = strategy.select({
     learner: learnerState,
     candidates,
     seenQuestionIds: new Set(answered.map((item) => item.questionId)),
     askedSkillCounts,
     askedBloomCounts,
+    // Most-recent-first, so the policy can see (and break up) a run on one skill.
+    recentSkillIds: answered.slice(-6).map((item) => item.skillId),
     responseModel: new LogisticResponseModel(model),
     knowledgeModel: bktModel,
     target: MASTERY_TARGET,
@@ -295,6 +362,29 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     })
     .returning();
 
+  // Exposure is recorded only once an item actually exists, and is keyed to it.
+  // That join is what lets attribution credit this learner's outcome to this
+  // arm — assignment alone deliberately does not.
+  if (experimentArm) {
+    try {
+      await recordExposure({
+        experimentId: experimentArm.experimentId,
+        studentId: assessment.studentId,
+        variantKey: experimentArm.variantKey,
+        configFingerprint: experimentArm.configFingerprint,
+        surface: "assessment.next-item",
+        entityId: item.id,
+        occurredAt: new Date(),
+      });
+    } catch (error) {
+      log.warn("experiment.exposure_failed", {
+        assessmentId,
+        studentId: assessment.studentId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
+
   events.questionSelected({
     assessmentId,
     studentId: assessment.studentId,
@@ -305,6 +395,8 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     predictedSuccess: round(chosen.predictedCorrect, 3),
     informationGain: round(chosen.information, 2),
     durationMs: Math.round(now() - selectionStart),
+    policyId: servingPolicyId,
+    decision: chosen.decision ?? null,
   });
 
   return {
@@ -325,6 +417,7 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     label: labelPrediction(chosen.predictedCorrect),
     rationale: chosen.explanation,
     informationGain: round(chosen.information, 2),
+    decision: chosen.decision ?? null,
   };
 }
 
