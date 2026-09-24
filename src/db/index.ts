@@ -13,10 +13,27 @@ const globalForDb = globalThis as typeof globalThis & {
   __arenaObservabilityInstrumented?: boolean;
 };
 
+/**
+ * Connection-pool sizing (env-tunable).
+ *
+ * pg defaults to max=10 and no connection timeout. Under load an undersized
+ * pool silently serializes requests, and a missing acquire timeout means a
+ * borrowed-but-never-returned connection can hang a request forever. We expose
+ * sensible, explicit production defaults; the observability layer already
+ * exports `adaptiq_db_pool_connections{state}` so saturation is visible.
+ */
+const num = (value: string | undefined, fallback: number) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
 export const pool =
   globalForDb.__arenaNextJsPostgresqlPool ??
   new Pool({
     connectionString: databaseUrl,
+    max: num(process.env.DB_POOL_MAX, 10),
+    idleTimeoutMillis: num(process.env.DB_POOL_IDLE_MS, 30_000),
+    connectionTimeoutMillis: num(process.env.DB_POOL_CONNECT_TIMEOUT_MS, 10_000),
   });
 
 if (process.env.NODE_ENV !== "production") {

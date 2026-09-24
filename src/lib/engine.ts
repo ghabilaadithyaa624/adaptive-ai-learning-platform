@@ -156,9 +156,17 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
       .limit(120),
   ]);
 
+  // The full mastery state set for this student is already loaded above; derive
+  // the per-skill decayed mastery from it instead of issuing extra queries
+  // (`loadSkillFeatures` re-queries mastery_states + a question count) on this
+  // hot, per-question-served path.
+  const masteryForSkill = (skillId: number) => {
+    const st = states.find((row) => row.skillId === skillId);
+    return st ? applyDecay(st.mastery, st.lastPracticedAt) : 0;
+  };
+
   if (pending) {
     const questionRow = candidateRows.find((row) => row.question.id === pending.questionId);
-    const skill = await loadSkillFeatures(assessment.studentId, pending.skillId);
     return {
       itemId: pending.id,
       questionId: pending.questionId,
@@ -173,7 +181,7 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
       bloomLevel: questionRow?.question.bloomLevel ?? "apply",
       estimatedSeconds: questionRow?.question.estimatedSeconds ?? 60,
       predictedSuccess: pending.predictedCorrectProb,
-      mastery: round(skill.mastery, 3),
+      mastery: round(masteryForSkill(pending.skillId), 3),
       label: labelPrediction(pending.predictedCorrectProb),
       rationale: "Resuming the item already queued for this session.",
       informationGain: round(pending.predictedCorrectProb * (1 - pending.predictedCorrectProb) * 4, 2),
@@ -271,7 +279,7 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
   events.modelPrediction({ model: "difficulty-classifier", surface: "selection", count: candidates.length });
 
   const questionRow = candidateRows.find((row) => row.question.id === chosen.candidate.questionId);
-  const skill = await loadSkillFeatures(assessment.studentId, chosen.candidate.skillId);
+  const chosenMastery = masteryForSkill(chosen.candidate.skillId);
   const [item] = await db
     .insert(assessmentItems)
     .values({
@@ -281,8 +289,8 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
       sequence: answered.length + 1,
       predictedCorrectProb: round(chosen.predictedCorrect, 3),
       assignedDifficulty: round(chosen.candidate.item.difficulty, 3),
-      masteryBefore: round(skill.mastery, 3),
-      masteryAfter: round(skill.mastery, 3),
+      masteryBefore: round(chosenMastery, 3),
+      masteryAfter: round(chosenMastery, 3),
       responseTimeMs: 0,
     })
     .returning();
@@ -313,7 +321,7 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     bloomLevel: questionRow?.question.bloomLevel ?? "apply",
     estimatedSeconds: questionRow?.question.estimatedSeconds ?? 60,
     predictedSuccess: round(chosen.predictedCorrect, 3),
-    mastery: round(skill.mastery, 3),
+    mastery: round(chosenMastery, 3),
     label: labelPrediction(chosen.predictedCorrect),
     rationale: chosen.explanation,
     informationGain: round(chosen.information, 2),

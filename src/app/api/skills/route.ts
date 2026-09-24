@@ -8,6 +8,7 @@ import { conflict } from "@/lib/http";
 import { idList, optString, readJsonBody, reqString } from "@/lib/validation";
 import { requireCapability } from "@/lib/authz";
 import { recordAudit } from "@/lib/audit";
+import { invalidate, CACHE_KEYS } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,7 @@ export async function POST(request: Request) {
       })
       .returning();
     await recordAudit({ actor: user, action: "skills.create", resource: "skills", resourceId: created.id, ip });
+    invalidate(CACHE_KEYS.skillCatalog);
     return ok({ skill: created }, 201);
   });
 }

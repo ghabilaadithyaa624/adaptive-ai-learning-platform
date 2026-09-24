@@ -7,6 +7,7 @@ import { badRequest, notFound } from "@/lib/http";
 import { idList, oneOf, optString, parseId, readJsonBody, stringList } from "@/lib/validation";
 import { requireCapability } from "@/lib/authz";
 import { recordAudit } from "@/lib/audit";
+import { invalidate, CACHE_KEYS } from "@/lib/cache";
 import {
   BLOOM_LEVELS,
   COGNITIVE_COMPLEXITY_LEVELS,
@@ -142,6 +143,7 @@ export async function DELETE(request: Request, { params }: Params) {
     await db.delete(itemStatistics).where(eq(itemStatistics.questionId, questionId));
     await db.delete(questions).where(eq(questions.id, questionId));
     await recordAudit({ actor: user, action: "questions.delete", resource: "questions", resourceId: questionId, ip });
+    invalidate(CACHE_KEYS.skillCatalog); // per-skill question counts changed
     return ok({ deleted: true });
   });
 }

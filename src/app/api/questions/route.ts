@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { idList, oneOf, optString, readJsonBody, reqString, stringList } from "@/lib/validation";
 import { requireCapability } from "@/lib/authz";
 import { recordAudit } from "@/lib/audit";
+import { invalidate, CACHE_KEYS } from "@/lib/cache";
 import {
   BLOOM_LEVELS,
   COGNITIVE_COMPLEXITY_LEVELS,
@@ -120,6 +121,7 @@ export async function POST(request: Request) {
       .returning();
 
     await recordAudit({ actor: user, action: "questions.create", resource: "questions", resourceId: created.id, ip, detail: `source=${source}` });
+    invalidate(CACHE_KEYS.skillCatalog); // per-skill question counts changed
     return ok({ question: created, warnings: report.warnings }, 201);
   });
 }

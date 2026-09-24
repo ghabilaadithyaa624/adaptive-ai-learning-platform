@@ -16,6 +16,7 @@ import { bktModel } from "./models/bkt";
 import { irtModel } from "./models/irt";
 import { bayesianModel } from "./models/bayesian";
 import { mean } from "@/lib/utils";
+import { cached, invalidate, CACHE_KEYS, CACHE_TTL } from "@/lib/cache";
 
 export const CLASSIFIER_NAME = "difficulty-classifier";
 export const TRACER_NAME = "bkt-knowledge-tracer";
@@ -36,7 +37,18 @@ export function datasetSignature(rows: { createdAt: Date | string; y: number }[]
   return `n${rows.length}-span${spanDays}d-c${checksum.toString(36)}`;
 }
 
+/**
+ * Load the active difficulty classifier. Called ~2x per answer on the hot
+ * assessment path (selection + grading). The model is STABLE — it only changes
+ * on retrain — so it is cached in-process and invalidated in `saveClassifier`.
+ * This removes 2 DB round trips per answer without any risk of serving stale
+ * per-student data (the model is global, not student-specific).
+ */
 export async function loadClassifier(): Promise<ClassifierModel> {
+  return cached(CACHE_KEYS.classifier, CACHE_TTL.model, loadClassifierUncached);
+}
+
+async function loadClassifierUncached(): Promise<ClassifierModel> {
   try {
     const rows = await db.select().from(mlModels).where(eq(mlModels.name, CLASSIFIER_NAME)).limit(1);
     const row = rows[0];
@@ -101,6 +113,9 @@ export async function saveClassifier(
     .insert(mlModels)
     .values(payload)
     .onConflictDoUpdate({ target: mlModels.name, set: payload });
+  // The active model changed — drop the cached classifier + registry views.
+  invalidate(CACHE_KEYS.classifier);
+  invalidate(CACHE_KEYS.modelRegistry);
 }
 
 export async function saveTracerSnapshot(summary: Record<string, number>, samples: number) {
@@ -117,6 +132,7 @@ export async function saveTracerSnapshot(summary: Record<string, number>, sample
     .insert(mlModels)
     .values(payload)
     .onConflictDoUpdate({ target: mlModels.name, set: payload });
+  invalidate(CACHE_KEYS.modelRegistry);
 }
 
 /**
@@ -146,6 +162,7 @@ export async function saveAdaptivePolicySnapshot() {
     .insert(mlModels)
     .values(payload)
     .onConflictDoUpdate({ target: mlModels.name, set: payload });
+  invalidate(CACHE_KEYS.modelRegistry);
 }
 
 /**

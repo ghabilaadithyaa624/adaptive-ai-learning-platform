@@ -7,6 +7,7 @@ import { badRequest } from "@/lib/http";
 import { idList, parseId, readJsonBody } from "@/lib/validation";
 import { requireCapability } from "@/lib/authz";
 import { recordAudit } from "@/lib/audit";
+import { invalidate, CACHE_KEYS } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,7 @@ export async function PATCH(request: Request, { params }: Params) {
     const [updated] = await db.update(skills).set(patch).where(eq(skills.id, skillId)).returning();
     if (!updated) throw badRequest("Skill not found.");
     await recordAudit({ actor: user, action: "skills.update", resource: "skills", resourceId: skillId, ip });
+    invalidate(CACHE_KEYS.skillCatalog);
     return ok({ skill: updated });
   });
 }
@@ -50,6 +52,7 @@ export async function DELETE(request: Request, { params }: Params) {
     await db.delete(pathMilestones).where(eq(pathMilestones.skillId, skillId));
     await db.delete(skills).where(eq(skills.id, skillId));
     await recordAudit({ actor: user, action: "skills.delete", resource: "skills", resourceId: skillId, ip });
+    invalidate(CACHE_KEYS.skillCatalog);
     return ok({ deleted: true });
   });
 }
