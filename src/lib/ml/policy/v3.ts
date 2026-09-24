@@ -41,6 +41,7 @@ import type {
   SelectionResult,
 } from "@/lib/ml/interfaces";
 import { buildDecisionExplanation } from "./explain";
+import { predictResponseProbability } from "../response-calibration";
 import {
   assessmentEfficiency,
   difficultyAppropriateness,
@@ -214,7 +215,7 @@ export class MultiObjectivePolicy implements ItemSelectionStrategy {
       const skill = skillFor(candidate);
       const prereqLcb = lcbFor(skill);
       const predictedCorrect = clamp(
-        input.responseModel.predict({ learner: input.learner, skill, item: candidate.item }),
+        predictResponseProbability(input.responseModel, { learner: input.learner, skill, item: candidate.item }),
         0.02,
         0.98,
       );

@@ -100,8 +100,15 @@ export async function assembleLearnerContext(
       .innerJoin(subjects, eq(subjects.id, skills.subjectId)),
     db
       .select({
+        responseId: assessmentItems.id,
+        questionId: questions.id,
         skillId: assessmentItems.skillId,
         isCorrect: assessmentItems.isCorrect,
+        studentAnswer: assessmentItems.studentAnswer,
+        options: questions.options,
+        distractorMeta: questions.distractorMeta,
+        subskill: questions.subskill,
+        masteryBefore: assessmentItems.masteryBefore,
         responseTimeMs: assessmentItems.responseTimeMs,
         estimatedSeconds: questions.estimatedSeconds,
         difficultyLabel: questions.difficultyLabel,
@@ -155,6 +162,14 @@ export async function assembleLearnerContext(
     .map((row) => ({
       skillId: row.skillId,
       isCorrect: Boolean(row.isCorrect),
+      responseId: row.responseId,
+      questionId: row.questionId,
+      subskill: row.subskill,
+      selectedOption: row.studentAnswer,
+      distractor: row.studentAnswer == null ? null : row.options[row.studentAnswer] ?? null,
+      misconception: row.studentAnswer == null ? null : row.distractorMeta.find(d => d.optionIndex === row.studentAnswer)?.misconception ?? null,
+      prerequisiteSkillId: row.studentAnswer == null ? null : row.distractorMeta.find(d => d.optionIndex === row.studentAnswer)?.prerequisiteSkillId ?? null,
+      masteryAtObservation: row.masteryBefore,
       responseTimeMs: row.responseTimeMs,
       estimatedSeconds: row.estimatedSeconds,
       difficulty: DIFFICULTY_VALUE[row.difficultyLabel] ?? 0.55,
@@ -337,6 +352,7 @@ function buildFocusSkill(
     recentAccuracy: s ? s.recentAccuracy : 0,
     errorType: s ? s.errorProfile.type : "insufficient-data",
     errorLabel: s ? s.errorProfile.label : "No responses yet on this skill",
+    misconceptions: s?.misconceptions ?? [],
     prereqReadiness: s ? s.prereqReadiness : prereqs.length ? 0 : 1,
     prereqs,
   };

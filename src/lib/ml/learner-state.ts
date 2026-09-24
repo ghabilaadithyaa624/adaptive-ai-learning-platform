@@ -15,6 +15,7 @@
 import { DEFAULT_BKT } from "@/lib/ml/knowledge-tracing";
 import { DEFAULT_BAYESIAN } from "@/lib/ml/models/bayesian";
 import { clamp, daysBetween, mean, round } from "@/lib/utils";
+import { detectMisconceptions } from "./misconceptions";
 import type {
   AssessmentContext,
   ErrorProfile,
@@ -47,6 +48,14 @@ export interface RawResponse {
   difficulty: number;
   bloom: number;
   hintUsed?: boolean;
+  questionId?: number;
+  responseId?: number;
+  subskill?: string | null;
+  selectedOption?: number | null;
+  distractor?: string | null;
+  misconception?: string | null;
+  prerequisiteSkillId?: number | null;
+  masteryAtObservation?: number;
   createdAt: Date | string;
 }
 
@@ -98,7 +107,7 @@ function velocityFromHistory(history: { m: number }[], window: number) {
 }
 
 /** Evidence-based uncertainty via a Beta posterior over aggregate counts. */
-function uncertaintyFromCounts(attempts: number, correct: number) {
+export function uncertaintyFromCounts(attempts: number, correct: number) {
   const alpha = DEFAULT_BAYESIAN.priorAlpha + correct;
   const beta = DEFAULT_BAYESIAN.priorBeta + Math.max(0, attempts - correct);
   const n = alpha + beta;
@@ -201,6 +210,20 @@ export function buildLearnerState(input: BuildLearnerStateInput): LearnerState {
 
     const avgDifficulty = recent.length ? mean(recent.map((r) => r.difficulty)) : s.difficultyBase;
     const avgBloom = recent.length ? mean(recent.map((r) => r.bloom)) : 3;
+    const misconceptions = detectMisconceptions(skillResponses.map((r, index) => ({
+      responseId: r.responseId,
+      questionId: r.questionId ?? -(index + 1),
+      skillId: r.skillId,
+      subskill: r.subskill,
+      selectedOption: r.selectedOption ?? null,
+      distractor: r.distractor,
+      misconception: r.misconception,
+      prerequisiteSkillId: r.prerequisiteSkillId,
+      isCorrect: r.isCorrect,
+      responseTimeRatio: responseRatio(r),
+      observedAt: r.createdAt,
+      masteryAtObservation: r.masteryAtObservation,
+    })));
 
     skills.set(s.skillId, {
       skillId: s.skillId,
@@ -222,6 +245,7 @@ export function buildLearnerState(input: BuildLearnerStateInput): LearnerState {
       prereqReadiness: round(prereqReadiness, 3),
       prereqMastery,
       errorProfile: classifyErrors(skillResponses),
+      misconceptions,
       hintReliance: round(hintReliance, 3),
       hasHintData,
       avgDifficulty: round(avgDifficulty, 3),

@@ -14,7 +14,7 @@ import { DEFAULT_BKT, applyDecay, posterior, predictCorrect } from "@/lib/ml/kno
 import { labelPrediction, predictProbability, type FeatureSample } from "@/lib/ml/classifier";
 import { loadClassifier } from "@/lib/ml/registry";
 import { forecastPerformance } from "@/lib/ml/forecast";
-import { buildLearnerState, type RawResponse, type RawSkillState } from "@/lib/ml/learner-state";
+import { buildLearnerState, uncertaintyFromCounts, type RawResponse, type RawSkillState } from "@/lib/ml/learner-state";
 import { getSelectionStrategy, resolvePolicyId } from "@/lib/ml/policy";
 import {
   assignLearnerToActiveExperiments,
@@ -25,11 +25,13 @@ import { LogisticResponseModel } from "@/lib/ml/models/logistic";
 import { bktModel } from "@/lib/ml/models/bkt";
 import { events, log, now } from "@/lib/observability";
 import type { CandidateItem, DecisionExplanation } from "@/lib/ml/interfaces";
-import { SERVABLE_STATUSES } from "@/lib/questions/constants";
+import { BLOOM_TO_VALUE, DIFFICULTY_TO_VALUE, SERVABLE_STATUSES } from "@/lib/questions/constants";
 import { MASTERY_TARGET, clamp, mean, round } from "@/lib/utils";
+import { selectDiagnosticItem, shouldStopDiagnosticEvidence } from "@/lib/ml/diagnostic";
 
-export const DIFFICULTY_VALUE: Record<string, number> = { easy: 0.3, medium: 0.55, hard: 0.75, expert: 0.9 };
-export const BLOOM_VALUE: Record<string, number> = { remember: 1, understand: 2, apply: 3, analyze: 4, evaluate: 5, create: 6 };
+/** Backwards-compatible aliases; canonical mappings live in questions/constants. */
+export const DIFFICULTY_VALUE: Record<string, number> = DIFFICULTY_TO_VALUE;
+export const BLOOM_VALUE: Record<string, number> = BLOOM_TO_VALUE;
 
 export type SessionQuestion = {
   itemId: number;
@@ -152,8 +154,15 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     // Recent answered responses power recency, response-time and error signals.
     db
       .select({
+        responseId: assessmentItems.id,
+        questionId: questions.id,
         skillId: assessmentItems.skillId,
         isCorrect: assessmentItems.isCorrect,
+        studentAnswer: assessmentItems.studentAnswer,
+        options: questions.options,
+        distractorMeta: questions.distractorMeta,
+        subskill: questions.subskill,
+        masteryBefore: assessmentItems.masteryBefore,
         responseTimeMs: assessmentItems.responseTimeMs,
         estimatedSeconds: questions.estimatedSeconds,
         difficultyLabel: questions.difficultyLabel,
@@ -212,7 +221,10 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
       skillId: row.skill.id,
       skillName: row.skill.name,
       subjectName: row.subjectName,
-      mastery: state ? state.mastery : 0.2,
+      // Diagnostics use an explicitly uncertain neutral prior. This is not a
+      // claim that an unseen learner has 50% mastery; attempts=0 keeps
+      // uncertainty maximal until evidence arrives.
+      mastery: state ? state.mastery : assessment.mode === "diagnostic" ? 0.5 : 0.2,
       attempts: state?.attempts ?? 0,
       correct: state?.correct ?? 0,
       streak: state?.streak ?? 0,
@@ -229,6 +241,14 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     .map((row) => ({
       skillId: row.skillId,
       isCorrect: Boolean(row.isCorrect),
+      questionId: row.questionId,
+      responseId: row.responseId,
+      subskill: row.subskill,
+      selectedOption: row.studentAnswer,
+      distractor: row.studentAnswer == null ? null : row.options[row.studentAnswer] ?? null,
+      misconception: row.studentAnswer == null ? null : row.distractorMeta.find(d => d.optionIndex === row.studentAnswer)?.misconception ?? null,
+      prerequisiteSkillId: row.studentAnswer == null ? null : row.distractorMeta.find(d => d.optionIndex === row.studentAnswer)?.prerequisiteSkillId ?? null,
+      masteryAtObservation: row.masteryBefore,
       responseTimeMs: row.responseTimeMs,
       estimatedSeconds: row.estimatedSeconds,
       difficulty: DIFFICULTY_VALUE[row.difficultyLabel] ?? 0.55,
@@ -257,6 +277,8 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     item: {
       difficulty: DIFFICULTY_VALUE[row.question.difficultyLabel] ?? row.skillDifficulty ?? 0.55,
       bloom: BLOOM_VALUE[row.question.bloomLevel] ?? 3,
+      subskill: row.question.subskill,
+      misconceptionTags: row.question.distractorMeta.map(d => d.misconception).filter((x): x is string => Boolean(x)),
       expectedTimeMs: row.question.estimatedSeconds * 1000,
     },
     estimatedSeconds: row.question.estimatedSeconds,
@@ -321,10 +343,21 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     });
   }
 
-  const { chosen } = strategy.select({
+  const seenQuestionIds = new Set(answered.map((item) => item.questionId));
+  const diagnosticCandidate = assessment.mode === "diagnostic"
+    ? selectDiagnosticItem({
+        kind: "adaptive",
+        learner: learnerState,
+        candidates,
+        seenQuestionIds,
+        targetSkillIds,
+        seed: assessment.id,
+      })
+    : null;
+  const adaptiveResult = assessment.mode === "diagnostic" ? null : strategy.select({
     learner: learnerState,
     candidates,
-    seenQuestionIds: new Set(answered.map((item) => item.questionId)),
+    seenQuestionIds,
     askedSkillCounts,
     askedBloomCounts,
     // Most-recent-first, so the policy can see (and break up) a run on one skill.
@@ -333,6 +366,15 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     knowledgeModel: bktModel,
     target: MASTERY_TARGET,
   });
+  const chosen = diagnosticCandidate
+    ? {
+        candidate: diagnosticCandidate,
+        predictedCorrect: 0.5,
+        information: 1,
+        explanation: "Diagnostic sampling: broad prerequisite coverage and maximum uncertainty reduction.",
+        decision: null,
+      }
+    : adaptiveResult?.chosen ?? null;
 
   if (!chosen) {
     events.selectionExhausted({
@@ -346,7 +388,9 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
   events.modelPrediction({ model: "difficulty-classifier", surface: "selection", count: candidates.length });
 
   const questionRow = candidateRows.find((row) => row.question.id === chosen.candidate.questionId);
-  const chosenMastery = masteryForSkill(chosen.candidate.skillId);
+  const chosenMastery = assessment.mode === "diagnostic" && !stateBySkill.has(chosen.candidate.skillId)
+    ? 0.5
+    : masteryForSkill(chosen.candidate.skillId);
   const [item] = await db
     .insert(assessmentItems)
     .values({
@@ -495,7 +539,9 @@ export async function gradeItem(params: {
   });
 
   const isCorrect = params.studentAnswer !== null && params.studentAnswer === row.question.correctIndex;
-  const masteryBefore = skill.mastery;
+  // An unseen diagnostic skill starts from a neutral, maximally uncertain prior;
+  // zero is evidence of weakness and must not be assigned before an observation.
+  const masteryBefore = assessment.mode === "diagnostic" && !skill.state ? 0.5 : skill.mastery;
   // Use the per-skill BKT parameters persisted on the mastery state when
   // available (previously ignored) so tracing adapts to how slippery/guessable
   // each skill is; fall back to the population defaults otherwise.
@@ -576,7 +622,21 @@ export async function gradeItem(params: {
   const allItems = await db.select().from(assessmentItems).where(eq(assessmentItems.assessmentId, params.assessmentId));
   const answeredItems = allItems.filter((entry) => entry.studentAnswer !== null);
   const correctCount = answeredItems.filter((entry) => entry.isCorrect).length;
-  const shouldComplete = answeredItems.length >= assessment.itemTarget;
+  let shouldComplete = answeredItems.length >= assessment.itemTarget;
+  if (assessment.mode === "diagnostic" && !shouldComplete) {
+    const diagnosticStates = await db.select().from(masteryStates).where(eq(masteryStates.studentId, assessment.studentId));
+    const targets = assessment.targetSkillIds?.length
+      ? assessment.targetSkillIds
+      : diagnosticStates.map(s => s.skillId);
+    shouldComplete = shouldStopDiagnosticEvidence(
+      targets.map(skillId => {
+        const s = diagnosticStates.find(row => row.skillId === skillId);
+        return { skillId, attempts: s?.attempts ?? 0, uncertainty: uncertaintyFromCounts(s?.attempts ?? 0, s?.correct ?? 0) };
+      }),
+      answeredItems.length,
+      { minItems: Math.min(6, assessment.itemTarget), maxItems: assessment.itemTarget, targetMeanUncertainty: .58, minSkillCoverage: .75 },
+    );
+  }
 
   let summary: GradeResult["summary"] = null;
   if (shouldComplete) {
@@ -674,29 +734,39 @@ export async function startAssessment(params: {
   targetSkillIds: number[];
   itemTarget: number;
 }) {
+  const [priorMastery, priorAssessment, allSkills] = await Promise.all([
+    db.select({ id: masteryStates.id }).from(masteryStates).where(eq(masteryStates.studentId, params.studentId)).limit(1),
+    db.select({ id: assessments.id }).from(assessments).where(eq(assessments.studentId, params.studentId)).limit(1),
+    db.select({ id: skills.id }).from(skills),
+  ]);
+  const coldStart = priorMastery.length === 0 && priorAssessment.length === 0;
+  const mode = coldStart ? "diagnostic" : params.mode;
+  const targetSkillIds = coldStart ? allSkills.map(s => s.id) : params.targetSkillIds;
+  const itemTarget = coldStart ? Math.min(12, Math.max(6, targetSkillIds.length)) : params.itemTarget;
   const [row] = await db
     .insert(assessments)
     .values({
       studentId: params.studentId,
-      title: params.title,
-      mode: params.mode,
+      title: coldStart ? "Initial diagnostic" : params.title,
+      mode,
       status: "in_progress",
-      targetSkillIds: params.targetSkillIds,
-      itemTarget: params.itemTarget,
+      targetSkillIds,
+      itemTarget,
+      // Neutral and explicitly uncalibrated until the diagnostic supplies data.
       ability: 0.5,
     })
     .returning();
   await db.insert(activityEvents).values({
     studentId: params.studentId,
     type: "assessment",
-    summary: `Started ${params.title} (${params.itemTarget} adaptive items)`,
+    summary: `Started ${coldStart ? "initial diagnostic" : params.title} (${itemTarget} items)`,
     value: 0,
   });
   events.assessmentStarted({
     assessmentId: row.id,
     studentId: params.studentId,
-    mode: params.mode,
-    itemTarget: params.itemTarget,
+    mode,
+    itemTarget,
   });
   return row;
 }

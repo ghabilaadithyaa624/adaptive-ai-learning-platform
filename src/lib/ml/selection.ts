@@ -24,6 +24,7 @@ import { ucbBonus } from "@/lib/ml/models/bandit";
 import { composeExplanation } from "@/lib/ml/explain";
 import { decisionFromFactors } from "@/lib/ml/policy/explain";
 import { fingerprint } from "@/lib/ml/policy/weights";
+import { predictResponseProbability } from "@/lib/ml/response-calibration";
 import type {
   CandidateItem,
   DecisionFactor,
@@ -136,7 +137,7 @@ export class AdaptiveSelector implements ItemSelectionStrategy {
       const belief = beliefFrom(skill);
 
       const predictedCorrect = clamp(
-        input.responseModel.predict({ learner: input.learner, skill, item: candidate.item }),
+        predictResponseProbability(input.responseModel, { learner: input.learner, skill, item: candidate.item }),
         0.02,
         0.98,
       );

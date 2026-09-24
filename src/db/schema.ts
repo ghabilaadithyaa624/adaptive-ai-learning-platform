@@ -102,7 +102,7 @@ export const questions = pgTable("questions", {
   hints: jsonb("hints").$type<string[]>().notNull().default([]),
   /** Per-distractor pedagogy: which misconception each wrong option targets. */
   distractorMeta: jsonb("distractor_meta")
-    .$type<{ optionIndex: number; misconception?: string; rationale?: string }[]>()
+    .$type<{ optionIndex: number; misconception?: string; rationale?: string; prerequisiteSkillId?: number }[]>()
     .notNull()
     .default([]),
   estimatedSeconds: integer("estimated_seconds").notNull().default(60),

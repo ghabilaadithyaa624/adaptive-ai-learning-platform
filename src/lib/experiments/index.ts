@@ -58,6 +58,7 @@ export * from "./types";
 export * from "./assignment";
 export * from "./attribution";
 export * from "./analysis";
+export * from "./real-world-evaluation";
 export * from "./lifecycle";
 export * from "./runtime";
 export * from "./stats";

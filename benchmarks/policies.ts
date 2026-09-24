@@ -33,7 +33,16 @@ export type PolicyId =
   | "mastery-gap-only"
   | "legacy"
   | "v2"
-  | "v3";
+  | "v3"
+  | "v3-no-response"
+  | "v3-true-mastery"
+  | "v3-no-information"
+  | "v3-no-prerequisite-weight"
+  | "v3-no-diversity"
+  | "v3-mastery-gap-skill"
+  | "v3-calibrated-response"
+  | "v3-oracle-response"
+  | "irt-assisted";
 
 export interface EstimatedSkill {
   skillId: number;

@@ -27,6 +27,9 @@ export interface ItemDescriptor {
   bloom: number;
   /** IRT discrimination (slope). Optional; defaults to 1 for models that use it. */
   discrimination?: number;
+  /** Authored tags only; used to target practice for structured hypotheses. */
+  misconceptionTags?: string[];
+  subskill?: string | null;
   /** Expected time-on-task in ms, used to normalise response time. */
   expectedTimeMs?: number;
   /**
@@ -166,6 +169,8 @@ export interface LearnerSkillState {
 
   /** (13) Error patterns. */
   errorProfile: ErrorProfile;
+  /** Structured, evidence-backed misconceptions; optional for legacy adapters. */
+  misconceptions?: import("./misconceptions").MisconceptionHypothesis[];
 
   /** (14) Hint usage — reliance 0..1; hasHintData=false when unavailable. */
   hintReliance: number;

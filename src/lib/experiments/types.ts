@@ -342,7 +342,7 @@ export interface ExperimentDraft {
   name: string;
   hypothesis?: string;
   institutionId: number | null;
-  variants: Omit<ExperimentVariant, "config"> & { config: Omit<VersionedPolicyConfig, "fingerprint"> }[];
+  variants: (Omit<ExperimentVariant, "config"> & { config: Omit<VersionedPolicyConfig, "fingerprint"> })[];
   eligibility?: EligibilityRule;
   primaryMetric: PrimaryMetricKey;
   secondaryMetrics?: SecondaryMetricKey[];
