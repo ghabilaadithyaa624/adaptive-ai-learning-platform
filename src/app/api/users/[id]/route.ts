@@ -9,6 +9,7 @@ import {
   pathMilestones,
   recommendations,
   sessions,
+  tutorInteractions,
   users,
 } from "@/db/schema";
 import { ok, toNumber, withAuth } from "@/lib/api";
@@ -103,6 +104,7 @@ export async function DELETE(request: Request, { params }: Params) {
     await db.delete(recommendations).where(eq(recommendations.studentId, targetId));
     await db.delete(masteryStates).where(eq(masteryStates.studentId, targetId));
     await db.delete(activityEvents).where(eq(activityEvents.studentId, targetId));
+    await db.delete(tutorInteractions).where(eq(tutorInteractions.studentId, targetId));
     await db.delete(sessions).where(eq(sessions.userId, targetId));
     await db.delete(users).where(eq(users.id, targetId));
     await recordAudit({ actor: user, action: "users.delete", resource: "users", resourceId: targetId, ip });
