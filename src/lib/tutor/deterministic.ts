@@ -155,9 +155,12 @@ function diagnose(learner: LearnerTutorContext, curriculum: CurriculumContext): 
     none: "no single dominant error pattern stands out",
   };
   const pattern = patternMap[focus.errorType] ?? "the pattern is mixed";
-  const misconception = curriculum.misconceptionBank[0]
-    ? `A common trap here is: ${curriculum.misconceptionBank[0]}.`
-    : null;
+  const detected = focus.misconceptions?.find(h => h.confidence !== "LOW");
+  const misconception = detected
+    ? `The recorded responses support a ${detected.confidence.toLowerCase()}-confidence hypothesis: ${detected.misconception} (${detected.evidenceCount} distinct items).`
+    : curriculum.misconceptionBank[0]
+      ? `A common trap here is: ${curriculum.misconceptionBank[0]}. This is not yet detected for you.`
+      : null;
   const recent = learner.recentMistakes[0]
     ? `Your most recent miss was on a ${learner.recentMistakes[0].difficulty} ${learner.recentMistakes[0].skillName} item.`
     : null;

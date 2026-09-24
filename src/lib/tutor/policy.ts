@@ -66,7 +66,9 @@ function applyAdjustment(level: DifficultyLevel, request: DifficultyRequest): Di
 function remediationStyle(learner: LearnerTutorContext): TutorPolicyDecision["remediationStyle"] {
   const focus = learner.focusSkill;
   if (!focus || learner.coldStart || focus.attempts < 3) return "foundational";
-  if (focus.prereqReadiness < PREREQ_MET) return "scaffold";
+  const hypothesis = focus.misconceptions?.find(h => h.confidence !== "LOW");
+  if (hypothesis?.errorPattern === "prerequisite_weakness" || focus.prereqReadiness < PREREQ_MET) return "scaffold";
+  if (hypothesis?.errorPattern === "repeated_misconception") return "conceptual";
   switch (focus.errorType) {
     case "careless":
       return "accuracy-checks";
@@ -132,6 +134,10 @@ export function decidePolicy(learner: LearnerTutorContext, request: TutorRequest
     }
   } else if (focus && focus.attempts < 3 && intent === "diagnose") {
     guardrails.push("Thin evidence on this skill — present the diagnosis as tentative.");
+  }
+  const structuredHypothesis = focus?.misconceptions?.find(h => h.confidence !== "LOW");
+  if (structuredHypothesis && (intent === "diagnose" || intent === "remediate")) {
+    guardrails.push(`Structured ${structuredHypothesis.confidence} confidence hypothesis: ${structuredHypothesis.misconception}. Explain it tentatively using the recorded evidence; do not change mastery or promote confidence.`);
   }
 
   // ---- next-activity grounding ----

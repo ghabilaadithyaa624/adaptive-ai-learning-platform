@@ -30,6 +30,8 @@ export const FEATURE_NAMES = [
 
 export type ClassifierModel = {
   name: string;
+  /** Optional independently fitted calibration artifact. Absent means identity. */
+  calibration?: import("./response-calibration").ResponseCalibrator;
   version: string;
   featureNames: string[];
   weights: number[];

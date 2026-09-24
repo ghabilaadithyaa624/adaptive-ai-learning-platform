@@ -20,7 +20,7 @@ import { buildValidationContext, resolveDifficultyValue } from "@/lib/questions/
 export const dynamic = "force-dynamic";
 
 /** Parse distractor metadata from an untrusted array. */
-function parseDistractorMeta(value: unknown): { optionIndex: number; misconception?: string; rationale?: string }[] {
+function parseDistractorMeta(value: unknown): { optionIndex: number; misconception?: string; rationale?: string; prerequisiteSkillId?: number }[] {
   if (!Array.isArray(value)) return [];
   return value
     .filter((v): v is Record<string, unknown> => Boolean(v) && typeof v === "object")
@@ -28,6 +28,7 @@ function parseDistractorMeta(value: unknown): { optionIndex: number; misconcepti
       optionIndex: toNumber(v.optionIndex, -1),
       misconception: typeof v.misconception === "string" ? v.misconception.slice(0, 500) : undefined,
       rationale: typeof v.rationale === "string" ? v.rationale.slice(0, 500) : undefined,
+      prerequisiteSkillId: v.prerequisiteSkillId == null ? undefined : toNumber(v.prerequisiteSkillId, -1),
     }))
     .filter((v) => v.optionIndex >= 0)
     .slice(0, 12);

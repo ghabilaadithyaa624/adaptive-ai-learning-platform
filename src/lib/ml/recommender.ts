@@ -21,6 +21,7 @@ export type SkillSignal = {
   pathAlignment: number;
   questionCount: number;
   difficultyBase: number;
+  misconceptions?: import("./misconceptions").MisconceptionHypothesis[];
 };
 
 export const RECOMMENDER_WEIGHTS = {
@@ -75,18 +76,25 @@ export function scoreSkill(signal: SkillSignal, target = MASTERY_TARGET): Scored
   drivers.sort((a, b) => b.value - a.value);
 
   const weakEvidence = signal.attempts < 4;
+  const misconception = signal.misconceptions?.find(h => h.confidence !== "LOW");
   const action = weakEvidence
     ? "Diagnose with a short 5-item checkpoint"
-    : signal.mastery < 0.4
-      ? "Rebuild foundations with scaffolded practice"
-      : "Run a targeted practice set";
+    : misconception?.errorPattern === "prerequisite_weakness"
+      ? "Remediate the linked prerequisite before this skill"
+      : misconception?.errorPattern === "repeated_misconception"
+        ? `Target misconception: ${misconception.misconception}`
+        : signal.mastery < 0.4
+          ? "Rebuild foundations with scaffolded practice"
+          : "Run a targeted practice set";
 
   return {
     signal,
     priority: Math.max(0.02, priority),
     confidence: round(confidence, 2),
     factors,
-    reason: `${drivers[0].text}; ${drivers[1].text}.`,
+    reason: misconception
+      ? `${drivers[0].text}; ${misconception.confidence.toLowerCase()}-confidence ${misconception.errorPattern.replaceAll("_", " ")} supported by ${misconception.evidenceCount} distinct items.`
+      : `${drivers[0].text}; ${drivers[1].text}.`,
     action,
     gap,
   };

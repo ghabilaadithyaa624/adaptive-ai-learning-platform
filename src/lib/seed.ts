@@ -22,9 +22,10 @@ import { forecastPerformance } from "@/lib/ml/forecast";
 import { trainAndPersistClassifier } from "@/lib/ml/registry";
 import { computeAndPersistItemStatistics } from "@/lib/questions/analytics";
 import { MASTERY_TARGET, clamp, mean, round, seededRandom } from "@/lib/utils";
+import { BLOOM_TO_VALUE, DIFFICULTY_TO_VALUE } from "@/lib/questions/constants";
 
-const DIFFICULTY_VALUE: Record<string, number> = { easy: 0.3, medium: 0.55, hard: 0.75, expert: 0.9 };
-const BLOOM_VALUE: Record<string, number> = { remember: 1, understand: 2, apply: 3, analyze: 4, evaluate: 5, create: 6 };
+const DIFFICULTY_VALUE: Record<string, number> = DIFFICULTY_TO_VALUE;
+const BLOOM_VALUE: Record<string, number> = BLOOM_TO_VALUE;
 
 const SEED_INSTITUTIONS = [
   { name: "Northwood Academy", slug: "northwood-academy", type: "school", plan: "growth", region: "North America", seats: 1250 },

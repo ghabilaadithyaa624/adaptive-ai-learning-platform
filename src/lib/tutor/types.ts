@@ -147,6 +147,8 @@ export interface LearnerTutorContext {
     /** Error diagnosis from the learner-state builder. */
     errorType: string;
     errorLabel: string;
+    /** Read-only structured hypotheses; the tutor may explain but never mutate them. */
+    misconceptions?: import("@/lib/ml/misconceptions").MisconceptionHypothesis[];
     /** (prerequisites) */
     prereqReadiness: number;
     prereqs: PrereqView[];

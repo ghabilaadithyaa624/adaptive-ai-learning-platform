@@ -293,13 +293,20 @@ export function difficultyAppropriateness(ctx: ObjectiveContext): ObjectiveValue
   const difficultyFit = clamp(1 - Math.abs(candidate.item.difficulty - ideal) / params.difficultyTolerance, 0, 1);
   const idealBloom = 2 + 3 * clamp(skill.mastery, 0, 1);
   const bloomFit = clamp(1 - Math.abs(candidate.item.bloom - idealBloom) / 3, 0, 1);
-  const value = clamp((1 - params.bloomShare) * difficultyFit + params.bloomShare * bloomFit, 0, 1);
+  const baseFit = clamp((1 - params.bloomShare) * difficultyFit + params.bloomShare * bloomFit, 0, 1);
+  const tags = (candidate.item.misconceptionTags ?? []).map(t => t.trim().toLowerCase());
+  const targeted = (skill.misconceptions ?? []).some(h =>
+    h.errorPattern === "repeated_misconception" && h.confidence !== "LOW" && tags.includes(h.misconception.trim().toLowerCase()),
+  );
+  // A small, transparent tie-breaking nudge: never override prerequisite gates
+  // or difficulty fit, and never target a one-off/low-confidence hypothesis.
+  const value = targeted ? clamp(baseFit + .1 * (1 - baseFit), 0, 1) : baseFit;
   return {
     raw: candidate.item.difficulty,
     normalized: value,
     detail: `difficulty ${f2(candidate.item.difficulty)} vs ideal ${f2(ideal)}; Bloom ${candidate.item.bloom} vs ideal ${f2(
       idealBloom,
-    )}`,
+    )}${targeted ? "; targets repeated misconception" : ""}`,
   };
 }
 

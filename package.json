@@ -24,11 +24,10 @@
     "bench:tune": "tsx benchmarks/tune.ts"
   },
   "dependencies": {
-    "dotenv": "17.3.1",
-    "drizzle-orm": "0.45.2",
+    "drizzle-orm": "0.45.3",
     "ioredis": "^6.0.0",
     "next": "16.3.6",
-    "pg": "8.20.0",
+    "pg": "8.23.0",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },

@@ -31,7 +31,7 @@ export interface QuestionInput {
   cognitiveComplexity?: string | null;
   estimatedSeconds?: number | null;
   hints?: string[];
-  distractorMeta?: { optionIndex: number; misconception?: string; rationale?: string }[];
+  distractorMeta?: { optionIndex: number; misconception?: string; rationale?: string; prerequisiteSkillId?: number }[];
   source?: string;
 }
 
@@ -226,6 +226,9 @@ export function validateQuestion(input: QuestionInput, ctx: ValidationContext): 
         err("distractor_index_out_of_range", "distractorMeta", `Distractor metadata references option ${meta.optionIndex}, which does not exist.`);
       } else if (meta.optionIndex === correctIndex) {
         warn("distractor_meta_on_key", "distractorMeta", "Distractor metadata describes the correct answer, not a distractor.");
+      }
+      if (meta.prerequisiteSkillId != null && !ctx.skillIds.has(meta.prerequisiteSkillId)) {
+        err("invalid_distractor_prerequisite", "distractorMeta", `Unknown prerequisite skill ${meta.prerequisiteSkillId}.`);
       }
     }
   }

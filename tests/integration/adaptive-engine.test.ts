@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db, describeDb, closePool } from "../helpers/db";
 import { seedFixtures, type Fixtures } from "../helpers/fixtures";
 import { computeNextSessionQuestion, gradeItem, startAssessment } from "@/lib/engine";
-import { assessments, questions } from "@/db/schema";
+import { assessmentItems, assessments, masteryStates, questions } from "@/db/schema";
 
 async function keyFor(questionId: number): Promise<number> {
   const [q] = await db.select({ ci: questions.correctIndex }).from(questions).where(eq(questions.id, questionId));
@@ -111,6 +111,33 @@ describeDb("integration · adaptive engine", () => {
     const [row] = await db.select().from(assessments).where(eq(assessments.id, a.id));
     expect(row.status).toBe("completed");
     expect(row.score).not.toBeNull();
+  });
+
+  it("routes a zero-history learner through a broad, bounded diagnostic before normal adaptation", async () => {
+    const a = await startAssessment({ studentId: fx.users.dave, title: "Practice", mode: "practice", targetSkillIds: [], itemTarget: 20 });
+    expect(a.mode).toBe("diagnostic");
+    expect(a.itemTarget).toBeGreaterThanOrEqual(6);
+    expect(a.itemTarget).toBeLessThanOrEqual(12);
+    expect(a.targetSkillIds).toHaveLength(4);
+
+    const servedSkills = new Set<number>();
+    let next = await computeNextSessionQuestion(a.id);
+    let guard = 0;
+    while (next && guard++ < 12) {
+      servedSkills.add(next.skillId);
+      // The delivery contract contains options but never the answer key.
+      expect(next).not.toHaveProperty("correctIndex");
+      const key = await keyFor(next.questionId);
+      const graded = await gradeItem({ assessmentId: a.id, itemId: next.itemId, studentAnswer: key, responseTimeMs: 3000 });
+      if ("error" in graded) throw new Error(graded.error);
+      next = graded.next;
+    }
+    expect(servedSkills.size).toBeGreaterThanOrEqual(3);
+    const items = await db.select().from(assessmentItems).where(eq(assessmentItems.assessmentId, a.id));
+    expect(items.length).toBeLessThanOrEqual(12);
+    const states = await db.select().from(masteryStates).where(eq(masteryStates.studentId, fx.users.dave));
+    expect(states.length).toBeGreaterThanOrEqual(3);
+    expect(states.every(s => s.attempts > 0)).toBe(true);
   });
 
   it("guards against grading an already-answered item", async () => {

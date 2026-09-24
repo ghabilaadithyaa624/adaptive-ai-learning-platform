@@ -19,6 +19,7 @@ import { bktModel } from "./models/bkt";
 import { irtModel } from "./models/irt";
 import { bayesianModel } from "./models/bayesian";
 import { mean } from "@/lib/utils";
+import { BLOOM_TO_VALUE, DIFFICULTY_TO_VALUE } from "@/lib/questions/constants";
 import { cached, invalidate, CACHE_KEYS, CACHE_TTL } from "@/lib/cache";
 
 export const CLASSIFIER_NAME = "difficulty-classifier";
@@ -67,6 +68,7 @@ async function loadClassifierUncached(): Promise<ClassifierModel> {
       stds: params.stds ?? [],
       samples: row.samples,
       trainedAt: row.trainedAt.toISOString(),
+      calibration: params.calibration as ClassifierModel["calibration"],
       metrics: {
         accuracy: row.metrics.accuracy ?? 0,
         logLoss: row.metrics.logLoss ?? 0,
@@ -105,6 +107,9 @@ export async function saveClassifier(
       weights: model.weights,
       means: model.means,
       stds: model.stds,
+      // Persist only after explicit promotion; training the classifier never
+      // manufactures or silently enables a calibrator.
+      ...(model.calibration ? { calibration: model.calibration } : {}),
     } as Record<string, unknown>,
     hyperparams: (provenance.hyperparams ?? {}) as Record<string, unknown>,
     metrics: { ...model.metrics } as Record<string, number>,
@@ -224,8 +229,8 @@ export async function trainAndPersistClassifier() {
     })
     .from(masteryStates);
 
-  const difficultyValue: Record<string, number> = { easy: 0.3, medium: 0.55, hard: 0.75, expert: 0.9 };
-  const bloomValue: Record<string, number> = { remember: 1, understand: 2, apply: 3, analyze: 4, evaluate: 5, create: 6 };
+  const difficultyValue: Record<string, number> = DIFFICULTY_TO_VALUE;
+  const bloomValue: Record<string, number> = BLOOM_TO_VALUE;
 
   // Features are built causally: only responses that happened *before* the
   // current item contribute to ability/accuracy. This mirrors serving time and
