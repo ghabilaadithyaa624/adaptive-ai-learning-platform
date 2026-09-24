@@ -20,7 +20,8 @@
     "test:e2e": "vitest run tests/e2e",
     "test:all": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "bench": "vitest run tests/unit/benchmark.test.ts"
+    "bench": "vitest run tests/unit/benchmark.test.ts",
+    "bench:tune": "tsx benchmarks/tune.ts"
   },
   "dependencies": {
     "dotenv": "17.3.1",

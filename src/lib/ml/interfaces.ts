@@ -29,6 +29,12 @@ export interface ItemDescriptor {
   discrimination?: number;
   /** Expected time-on-task in ms, used to normalise response time. */
   expectedTimeMs?: number;
+  /**
+   * Bank-level exposure rate 0..1 (how often this item has already been served
+   * across the cohort). Optional; enables Sympson-Hetter style exposure control
+   * in the v3 policy. Absent → treated as 0 (unexposed).
+   */
+  exposureRate?: number;
 }
 
 /** A single graded response fed to a knowledge-tracing model. */
@@ -232,6 +238,93 @@ export interface DecisionFactor {
   detail: string;
 }
 
+/* ------------------------------------------------------------------ */
+/* Machine-readable decision explanation (audit contract)              */
+/* ------------------------------------------------------------------ */
+
+/** Stable schema id for persisted/serialised decision explanations. */
+export const DECISION_EXPLANATION_SCHEMA = "adaptive.decision.v1" as const;
+
+/** One objective's contribution to a selection decision. */
+export interface DecisionObjective {
+  /** Stable machine key (e.g. `expectedMasteryGain`). */
+  key: string;
+  /** Human label for UI. */
+  label: string;
+  /** The signal in its natural unit (probability, days, seconds, count...). */
+  raw: number;
+  /** The 0..1 value actually fed into the weighted sum. */
+  normalized: number;
+  /** Configured weight for this objective. */
+  weight: number;
+  /** Signed contribution to the final score (`±weight × normalized`). */
+  contribution: number;
+  /** Whether the term adds utility or subtracts it. */
+  direction: "benefit" | "penalty";
+  /** Why this objective exists and what this value means. */
+  rationale: string;
+}
+
+/** A hard constraint evaluated before/while scoring. */
+export interface DecisionGate {
+  key: string;
+  label: string;
+  /** Did the *selected* item satisfy the gate? */
+  passed: boolean;
+  /** True when the gate had to be relaxed because nothing satisfied it. */
+  relaxed: boolean;
+  /** How many candidates the gate removed from the pool. */
+  filtered: number;
+  detail: string;
+}
+
+/**
+ * Fully machine-readable justification for one served item. Every policy must
+ * emit one for the item it selects, so any decision can be replayed, audited and
+ * shown to a learner/teacher without an LLM in the loop.
+ */
+export interface DecisionExplanation {
+  schema: typeof DECISION_EXPLANATION_SCHEMA;
+  policyId: string;
+  policyVersion: string;
+  /** Deterministic fingerprint of the weight/param configuration in force. */
+  configFingerprint: string;
+  questionId: number;
+  skillId: number;
+  skillName: string;
+  /** Final composite score of the chosen item. */
+  score: number;
+  /** 1-based rank of this item in the scored pool. */
+  rank: number;
+  candidatesConsidered: number;
+  candidatesFiltered: number;
+  objectives: DecisionObjective[];
+  gates: DecisionGate[];
+  /** Objective keys ordered by |contribution|, best-first. */
+  topDrivers: string[];
+  /** Why this item rather than the runner-up. */
+  counterfactual: {
+    runnerUpQuestionId: number | null;
+    runnerUpSkillId: number | null;
+    scoreMargin: number;
+    decidingObjectives: { key: string; delta: number }[];
+  } | null;
+  /** The learner-state slice the decision was conditioned on. */
+  learnerSnapshot: {
+    mastery: number;
+    uncertainty: number;
+    attempts: number;
+    predictedSuccess: number;
+    prereqReadiness: number;
+    prereqReadinessLcb: number;
+    daysSincePractice: number;
+    retention: number;
+  };
+  targets: { mastery: number; success: number };
+  /** Deterministic, templated natural-language sentence (no LLM). */
+  narrative: string;
+}
+
 /** The outcome of scoring a single candidate. */
 export interface ScoredItem {
   candidate: CandidateItem;
@@ -244,6 +337,8 @@ export interface ScoredItem {
   explanation: string;
   /** Structured chips for UI. */
   steps: { label: string; value: string; tone: string }[];
+  /** Machine-readable, auditable decision record (required for every item). */
+  decision: DecisionExplanation;
 }
 
 export interface SelectionResult {
@@ -263,12 +358,26 @@ export interface SelectionInput {
   askedSkillCounts: Map<number, number>;
   /** How many items per bloom level this session (diversity). */
   askedBloomCounts?: Map<number, number>;
+  /**
+   * Skill ids served this session in order (most recent last). Enables
+   * blocked-practice detection (consecutive items on one skill). Optional.
+   */
+  recentSkillIds?: number[];
   responseModel: ResponseModel;
   knowledgeModel: KnowledgeTracingModel;
   /** Mastery target (default 0.85). */
   target?: number;
   /** Optional weight overrides (for tuning / benchmarking). */
   weights?: Partial<SelectionWeights>;
+  /**
+   * Optional multi-objective (v3) policy overrides. Ignored by the v2 selector;
+   * consumed by `MultiObjectivePolicy`. Typed loosely here so the shared
+   * contract module stays dependency-free — see `ml/policy/types.ts`.
+   */
+  policyConfig?: {
+    weights?: Record<string, number>;
+    params?: Record<string, number>;
+  };
 }
 
 /** Tunable, documented weights for the composite selection score. */

@@ -15,11 +15,11 @@ import { labelPrediction, predictProbability, type FeatureSample } from "@/lib/m
 import { loadClassifier } from "@/lib/ml/registry";
 import { forecastPerformance } from "@/lib/ml/forecast";
 import { buildLearnerState, type RawResponse, type RawSkillState } from "@/lib/ml/learner-state";
-import { selectNextItemV2 } from "@/lib/ml/selection";
+import { getSelectionStrategy, resolvePolicyId } from "@/lib/ml/policy";
 import { LogisticResponseModel } from "@/lib/ml/models/logistic";
 import { bktModel } from "@/lib/ml/models/bkt";
 import { events, now } from "@/lib/observability";
-import type { CandidateItem } from "@/lib/ml/interfaces";
+import type { CandidateItem, DecisionExplanation } from "@/lib/ml/interfaces";
 import { SERVABLE_STATUSES } from "@/lib/questions/constants";
 import { MASTERY_TARGET, clamp, mean, round } from "@/lib/utils";
 
@@ -44,6 +44,13 @@ export type SessionQuestion = {
   label: { key: string; label: string; tone: string; hint: string };
   rationale: string;
   informationGain: number;
+  /**
+   * Machine-readable record of *why* this question was selected: every
+   * objective's raw/normalised value and weighted contribution, every gate that
+   * filtered candidates, the runner-up it beat and by how much. Persisted with
+   * the selection event so any served item can be audited after the fact.
+   */
+  decision: DecisionExplanation | null;
 };
 
 export async function loadSkillFeatures(studentId: number, skillId: number) {
@@ -185,6 +192,10 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
       label: labelPrediction(pending.predictedCorrectProb),
       rationale: "Resuming the item already queued for this session.",
       informationGain: round(pending.predictedCorrectProb * (1 - pending.predictedCorrectProb) * 4, 2),
+      // Resumed items were explained when they were first selected; the record
+      // lives on that original selection event rather than being re-derived
+      // against a learner state that has since moved on.
+      decision: null,
     };
   }
 
@@ -256,12 +267,18 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     askedBloomCounts.set(bloom, (askedBloomCounts.get(bloom) ?? 0) + 1);
   }
 
-  const { chosen } = selectNextItemV2({
+  // Serving policy is pluggable and resolved per request, so a tenant can pin
+  // v2 (or a weight preset) via configuration without a deploy. Default is v3 —
+  // see `benchmarks/RESULTS.md` §2 for the held-out evidence behind that default.
+  const policyId = resolvePolicyId();
+  const { chosen } = getSelectionStrategy(policyId).select({
     learner: learnerState,
     candidates,
     seenQuestionIds: new Set(answered.map((item) => item.questionId)),
     askedSkillCounts,
     askedBloomCounts,
+    // Most-recent-first, so the policy can see (and break up) a run on one skill.
+    recentSkillIds: answered.slice(-6).map((item) => item.skillId),
     responseModel: new LogisticResponseModel(model),
     knowledgeModel: bktModel,
     target: MASTERY_TARGET,
@@ -305,6 +322,8 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     predictedSuccess: round(chosen.predictedCorrect, 3),
     informationGain: round(chosen.information, 2),
     durationMs: Math.round(now() - selectionStart),
+    policyId,
+    decision: chosen.decision ?? null,
   });
 
   return {
@@ -325,6 +344,7 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     label: labelPrediction(chosen.predictedCorrect),
     rationale: chosen.explanation,
     informationGain: round(chosen.information, 2),
+    decision: chosen.decision ?? null,
   };
 }
 

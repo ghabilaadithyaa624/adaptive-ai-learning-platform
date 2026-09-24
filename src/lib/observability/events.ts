@@ -10,6 +10,7 @@
  * answer text. Passwords and session tokens are never passed here at all.
  */
 import { log } from "./logger";
+import type { DecisionExplanation } from "@/lib/ml/interfaces";
 import { metrics } from "./metrics";
 import { maskEmail } from "./redact";
 
@@ -63,9 +64,22 @@ export const events = {
     predictedSuccess: number;
     informationGain: number;
     durationMs: number;
+    /** Which selection policy served this item. */
+    policyId?: string;
+    /** Machine-readable decision explanation (v3 policy only). */
+    decision?: DecisionExplanation | null;
   }): void {
     metrics.adaptiveSelectionDuration.observe(f.durationMs / 1000);
-    log.info("question.selected", f);
+    const { decision, ...rest } = f;
+    // The full objective breakdown is verbose; log a compact summary at info
+    // level and keep the complete record at debug for audit replay.
+    log.info("question.selected", {
+      ...rest,
+      decisionScore: decision?.score,
+      decisionDrivers: decision?.topDrivers,
+      gatesApplied: decision?.gates.filter((g) => g.filtered > 0).map((g) => g.key),
+    });
+    if (decision) log.debug("question.selected.decision", { itemId: f.itemId, decision });
   },
   selectionExhausted(f: { assessmentId: number; studentId: number; durationMs: number }): void {
     metrics.adaptiveSelectionDuration.observe(f.durationMs / 1000);

@@ -22,9 +22,12 @@ import { clamp, round } from "@/lib/utils";
 import { MASTERY_TARGET } from "@/lib/utils";
 import { ucbBonus } from "@/lib/ml/models/bandit";
 import { composeExplanation } from "@/lib/ml/explain";
+import { decisionFromFactors } from "@/lib/ml/policy/explain";
+import { fingerprint } from "@/lib/ml/policy/weights";
 import type {
   CandidateItem,
   DecisionFactor,
+  DecisionGate,
   ItemSelectionStrategy,
   LearnerSkillState,
   ScoredItem,
@@ -96,6 +99,7 @@ function beliefFrom(skill: LearnerSkillState): SkillBelief {
 
 export class AdaptiveSelector implements ItemSelectionStrategy {
   readonly id = "adaptive-selector-v2";
+  readonly version = "2.0.0";
 
   select(input: SelectionInput): SelectionResult {
     const target = input.target ?? MASTERY_TARGET;
@@ -104,7 +108,9 @@ export class AdaptiveSelector implements ItemSelectionStrategy {
     const askedBloom = input.askedBloomCounts ?? new Map<number, number>();
 
     let excluded = 0;
-    const scored: ScoredItem[] = [];
+    // Staged items keep a reference to the skill state so the audit record can be
+    // attached after sorting (it needs the final rank).
+    const staged: { item: Omit<ScoredItem, "decision">; skill: LearnerSkillState }[] = [];
 
     // Resolve every candidate's skill once so the prerequisite gate can see the
     // whole pool: if any item's prerequisites are met, we route *away* from items
@@ -194,26 +200,74 @@ export class AdaptiveSelector implements ItemSelectionStrategy {
       ];
 
       const score = factors.reduce((acc, f) => acc + f.weighted, 0);
+      const explanation = composeExplanation({ skill, target, predictedCorrect, factors });
 
-      scored.push({
-        candidate,
-        score: round(score, 4),
-        predictedCorrect: round(predictedCorrect, 3),
-        information: round(information, 3),
-        expectedLearningGain: round(clamp(Math.max(0, expectedMastery - skill.mastery)), 4),
-        factors,
-        explanation: composeExplanation({ skill, target, predictedCorrect, factors }),
-        steps: [
-          { label: "Mastery", value: skill.mastery.toFixed(2), tone: "sky" },
-          { label: "Predicted success", value: `${(predictedCorrect * 100).toFixed(0)}%`, tone: "emerald" },
-          { label: "Difficulty", value: candidate.item.difficulty.toFixed(2), tone: "amber" },
-          { label: "Info gain", value: information.toFixed(2), tone: "violet" },
-          { label: "Exp. gain", value: (expectedMastery - skill.mastery).toFixed(3), tone: "slate" },
-        ],
+      staged.push({
+        skill,
+        item: {
+          candidate,
+          score: round(score, 4),
+          predictedCorrect: round(predictedCorrect, 3),
+          information: round(information, 3),
+          expectedLearningGain: round(clamp(Math.max(0, expectedMastery - skill.mastery)), 4),
+          factors,
+          explanation,
+          steps: [
+            { label: "Mastery", value: skill.mastery.toFixed(2), tone: "sky" },
+            { label: "Predicted success", value: `${(predictedCorrect * 100).toFixed(0)}%`, tone: "emerald" },
+            { label: "Difficulty", value: candidate.item.difficulty.toFixed(2), tone: "amber" },
+            { label: "Info gain", value: information.toFixed(2), tone: "violet" },
+            { label: "Exp. gain", value: (expectedMastery - skill.mastery).toFixed(3), tone: "slate" },
+          ],
+        },
       });
     }
 
-    scored.sort((a, b) => b.score - a.score || a.candidate.questionId - b.candidate.questionId);
+    staged.sort((a, b) => b.item.score - a.item.score || a.item.candidate.questionId - b.item.candidate.questionId);
+
+    const gates: DecisionGate[] = [
+      {
+        key: "no-repeat",
+        label: "No repeated questions",
+        passed: true,
+        relaxed: false,
+        filtered: input.candidates.length - resolved.length,
+        detail: `${input.candidates.length - resolved.length} already-served item(s) removed`,
+      },
+      {
+        key: "prerequisite-gate",
+        label: "Prerequisite gate",
+        passed: true,
+        relaxed: !ungatedAvailable,
+        filtered: Math.max(0, excluded - (input.candidates.length - resolved.length)),
+        detail: ungatedAvailable
+          ? `point-estimate readiness gate at ${PREREQ_GATE.toFixed(2)}`
+          : "no prerequisite-ready item existed; gated items were scored with a penalty",
+      },
+    ];
+    const configFingerprint = fingerprint({ selector: this.id, weights, target, gate: PREREQ_GATE });
+
+    const scored: ScoredItem[] = staged.map(({ item, skill }, index) => ({
+      ...item,
+      decision: decisionFromFactors({
+        policyId: this.id,
+        policyVersion: this.version,
+        configFingerprint,
+        skill,
+        questionId: item.candidate.questionId,
+        score: item.score,
+        rank: index + 1,
+        candidatesConsidered: input.candidates.length,
+        candidatesFiltered: excluded,
+        factors: item.factors,
+        gates,
+        predictedCorrect: item.predictedCorrect,
+        masteryTarget: target,
+        // v2's adaptive ZPD target (documented in the difficultyFit factor).
+        successTarget: 0.55 + 0.2 * skill.confidence,
+        explanation: item.explanation,
+      }),
+    }));
 
     return { chosen: scored[0] ?? null, ranked: scored, excluded };
   }
