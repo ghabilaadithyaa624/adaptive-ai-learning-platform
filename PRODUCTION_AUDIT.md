@@ -30,7 +30,10 @@ step (see `OPERATIONS.md`). CI is committed but must be enabled on the GitHub re
 | P2-2 | No DB foreign keys / non-transactional deletes | ✅ Fixed & verified |
 | P2-3 | No Content-Security-Policy | ✅ Fixed & verified |
 | P2-4 | Metrics endpoint open when token unset | ✅ Fixed & verified |
-| P3-1..4 | Dev-only CVEs, spoofable IP, in-memory rate limiter, modal a11y | Open (enhancements) |
+| P3-1 | Dev/test-only dependency CVEs | ✅ Fixed (vitest→5) — 1 dev-only chain left (drizzle-kit/esbuild) |
+| P3-2 | Spoofable client IP | ✅ Fixed & verified |
+| P3-3 | In-memory rate limiter doesn't scale | ✅ Pluggable store + configurable limits (Redis adapter documented) |
+| P3-4 | Modal a11y gaps | ✅ Fixed |
 
 ---
 
@@ -42,11 +45,11 @@ step (see `OPERATIONS.md`). CI is committed but must be enabled on the GitHub re
 | Build | `next build` | ✅ PASS (all routes compiled, incl. `/api/tutor`) |
 | Unit + integration + e2e | full `vitest run` (31 files) | ✅ PASS 300/300 |
 | Lint | `eslint .` | ✅ PASS (was 3 errors — fixed, P2-1) |
-| Dependency audit | `npm audit` | ⚠️ runtime/build CVEs **fixed**; 10 dev/test-only remain (need breaking vitest 5 bump → P3-1) |
+| Dependency audit | `npm audit` | ✅ runtime/build CVEs fixed; vitest chain fixed (P3-1); 4 moderate dev-only remain (drizzle-kit/esbuild, unexposed) |
 
 Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build dependency CVEs are resolved; the remaining `npm audit` findings are confined to the test toolchain.
 
-> **Update (2026-09-24):** P0-1, P1-1, and P1-5 have been remediated in this branch (see each entry). The overall verdict below still stands as ❌ NOT production-ready pending the remaining P1 items (migrations, deployment/CI, backups/DR).
+> **Update (2026-09-24):** **All P0, P1, P2, and P3 findings have been remediated in this branch** (see each entry). Also added `docker-compose.yml` for one-command local bring-up (Postgres + auto-migrate + app). The only open items are: a 4-CVE dev-only `drizzle-kit/esbuild` chain (unexposed) and wiring an actual Redis `RateLimitStore` for horizontal scale (seam in place). Verified: typecheck ✅, lint ✅, build ✅, **300/300 tests on vitest 5** ✅, production `npm audit` clean.
 
 ---
 
@@ -121,13 +124,13 @@ Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build depe
 
 ### P3 — Enhancement (nice to have; low risk)
 
-**P3-1 — Dev/test-only dependency CVEs** — `vitest`/`@vitest/mocker` (critical), `vite`/`esbuild`/`@esbuild-kit`/`drizzle-kit` (high/moderate). Not in the production runtime; still resolve by upgrading test tooling to keep the audit gate green.
+**P3-1 — Dev/test-only dependency CVEs — ✅ FIXED (mostly)** — Upgraded `vitest` + `@vitest/coverage-v8` 2.1.9 → **5.0.1**, clearing the `@vitest/mocker`/`vite`/`esbuild` (critical/high) chain. Verified **300/300** tests still pass on vitest 5. `npm audit` dropped from 9 vulns (2 critical, 1 high, 6 moderate) to **4 moderate**, all in one dev-only chain: `drizzle-kit → @esbuild-kit/esm-loader → esbuild`. That chain can only be resolved by a `drizzle-kit` prerelease and concerns the esbuild dev-server SSRF (GHSA-67mh-4wv8-2f99) — **not exposed** here since we only ever run `drizzle-kit generate`/`migrate`, never an esbuild dev server. Accepted, dev-only; CI's production audit (`--omit=dev`) is clean.
 
-**P3-2 — Client IP is spoofable** — `src/lib/request-context.ts` `clientIp()` trusts the first `x-forwarded-for` hop with no trusted-proxy allowlist. Because IP keys the login/register rate limiter (`src/lib/rate-limit.ts`), an attacker can rotate the header to evade throttling. Fix: derive client IP from a configured trusted-proxy depth.
+**P3-2 — Client IP is spoofable — ✅ FIXED** — `src/lib/request-context.ts` `clientIp()` now honours a configured `TRUSTED_PROXY_COUNT` and selects the entry at `len - k` from the `X-Forwarded-For` chain — the IP observed by the outermost trusted proxy, which a client cannot spoof. Default (k=0) resolves to the nearest-proxy-observed IP (correct behind a single reverse proxy). Documented in `.env.example`. Verified via unit + full suite (300/300).
 
-**P3-3 — In-memory rate limiter doesn't scale horizontally** — `src/lib/rate-limit.ts` keeps counters in process memory; with >1 instance limits are per-instance. Fix: back with a shared store (Redis) for multi-instance deployments.
+**P3-3 — In-memory rate limiter doesn't scale horizontally — ✅ IMPROVED** — `src/lib/rate-limit.ts` refactored into a pluggable `RateLimitStore` interface with the sliding-window `InMemoryRateLimitStore` as default and a `configureRateLimitStore()` seam to swap in a shared (Redis/Upstash) store for multi-instance deployments; all limits are now env-configurable (`RATE_LIMIT_*`). `docker-compose.yml` includes a commented Redis service as the drop-in target. (A shared store is inherently async — the remaining work is a Redis adapter + awaiting the two call sites, noted in-file.)
 
-**P3-4 — Modal a11y gaps** — `src/components/modal.tsx` has Escape-to-close and an aria-labelled backdrop but no `role="dialog"`/`aria-modal`, no focus trap, no initial focus. Fix: add dialog semantics and focus management. (Forms are otherwise accessible — `Field` in `src/components/ui.tsx` wraps inputs in a `<label>`, giving implicit association.)
+**P3-4 — Modal a11y gaps — ✅ FIXED** — `src/components/modal.tsx` now sets `role="dialog"`, `aria-modal="true"`, `aria-labelledby`/`aria-describedby` (via `useId`), traps Tab focus within the dialog, moves focus in on open, and restores focus to the trigger on close (WCAG 2.4.3). Backdrop made non-focusable. (Forms were already accessible — `Field` wraps inputs in a `<label>`.)
 
 ---
 
@@ -143,7 +146,7 @@ Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build depe
 | 6 | DB integrity | 🟢 Good | 24 FKs with cascade/set-null (P2-2 fixed); transactional deletes; integrity verified. |
 | 7 | API correctness | 🟢 Good | Consistent `withAuth`/validation/error envelope; 300 tests cover routes. |
 | 8 | Frontend | 🟢 Good | Typed client patterns; lint clean (P2-1 fixed). |
-| 9 | Accessibility | 🟡 Partial | Labels OK; modal semantics/focus gaps (P3-4). |
+| 9 | Accessibility | 🟢 Good | Labels OK; modal now has dialog semantics + focus trap (P3-4 fixed). |
 | 10 | Performance | 🟢 Good | Caching of stable reference data (not student data); pool config; indexes on hot paths. |
 | 11 | ML correctness | 🟢 Good | Deterministic BKT/recommender/forecast; pure `buildLearnerState`; covered by tests. |
 | 12 | ML evaluation | 🟢 Good | Classifier training/persistence + item statistics; honest, non-overfit design. |
@@ -165,10 +168,10 @@ Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build depe
 
 ## Remaining work (all P3 enhancements)
 
-1. **P3-1** — upgrade the test toolchain (breaking vitest 5 bump) to clear dev-only CVEs.
-2. **P3-2** — derive client IP from a configured trusted-proxy depth (hardens IP-keyed rate limiting).
-3. **P3-3** — back the rate limiter with a shared store (Redis) for multi-instance deployments.
-4. **P3-4** — add `role="dialog"`/`aria-modal` + focus trap to the modal.
+All P3 items have been addressed (see the P3 section). Only two small follow-ups remain, both low-risk:
+
+1. **P3-1 residual** — 4 moderate dev-only CVEs in `drizzle-kit → @esbuild-kit → esbuild`; clear once drizzle-kit ships a non-beta release that drops `@esbuild-kit`. No production/runtime exposure.
+2. **P3-3 residual** — implement the actual Redis-backed `RateLimitStore` (the pluggable seam + `docker-compose` Redis service are in place) when the app is scaled to multiple replicas.
 
 ## Operator pre-launch checklist (not code)
 

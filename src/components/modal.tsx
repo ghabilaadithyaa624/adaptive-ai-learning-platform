@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+
+const FOCUSABLE =
+  'a[href],button:not([disabled]),textarea,input,select,[tabindex]:not([tabindex="-1"])';
 
 export function Modal({
   open,
@@ -20,22 +23,70 @@ export function Modal({
   footer?: ReactNode;
   size?: "sm" | "md" | "lg";
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const descId = useId();
+
+  // Escape to close + a focus trap that keeps Tab within the dialog, and
+  // restores focus to the trigger element when the dialog closes (WCAG 2.4.3).
   useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+        (el) => el.offsetParent !== null || el === document.activeElement,
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || active === panel)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    if (open) document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+
+    document.addEventListener("keydown", onKey);
+    // Move focus into the dialog on open.
+    const panel = panelRef.current;
+    const firstField = panel?.querySelector<HTMLElement>(FOCUSABLE);
+    (firstField ?? panel)?.focus();
+
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      previouslyFocused?.focus?.();
+    };
   }, [open, onClose]);
 
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:items-center">
-      <button className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm" aria-label="Close dialog" onClick={onClose} />
+      <button className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm" aria-label="Close dialog" tabIndex={-1} onClick={onClose} />
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={description ? descId : undefined}
+        tabIndex={-1}
         className={cn(
-          "animate-in relative z-10 w-full rounded-2xl bg-white p-5 shadow-2xl",
+          "animate-in relative z-10 w-full rounded-2xl bg-white p-5 shadow-2xl outline-none",
           size === "sm" && "max-w-md",
           size === "md" && "max-w-xl",
           size === "lg" && "max-w-3xl",
@@ -43,10 +94,21 @@ export function Modal({
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold tracking-tight text-slate-900">{title}</h2>
-            {description ? <p className="mt-1 text-xs text-slate-500">{description}</p> : null}
+            <h2 id={titleId} className="text-base font-semibold tracking-tight text-slate-900">
+              {title}
+            </h2>
+            {description ? (
+              <p id={descId} className="mt-1 text-xs text-slate-500">
+                {description}
+              </p>
+            ) : null}
           </div>
-          <button onClick={onClose} className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close dialog"
+            className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+          >
             ✕
           </button>
         </div>

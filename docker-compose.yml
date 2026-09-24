@@ -1,0 +1,72 @@
+# One-command local bring-up: Postgres + the app (built from the Dockerfile).
+#
+#   docker compose up --build
+#
+# Then open http://localhost:3000. On first boot the app auto-runs migrations
+# (see the `migrate` service) and, because ALLOW_DEMO_SEED=true below, seeds the
+# demo dataset. Do NOT use these demo settings/secrets in production.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: adaptiq
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d adaptiq"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Runs versioned migrations once, then exits. The app waits for it to finish.
+  migrate:
+    build:
+      context: .
+      target: builder
+    command: ["npx", "drizzle-kit", "migrate"]
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/adaptiq
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/adaptiq
+      NODE_ENV: production
+      # Demo only — provisions the sample data + accounts on an empty DB.
+      ALLOW_DEMO_SEED: "true"
+      SEED_PASSWORD: "LocalDemoPass123"
+      # Local metrics token (guards /api/metrics). Change for anything shared.
+      METRICS_TOKEN: "local-dev-metrics-token"
+      # Single reverse proxy assumption for local runs.
+      TRUSTED_PROXY_COUNT: "0"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # --- Optional: shared store for rate limiting across multiple app replicas ---
+  # Uncomment and wire a Redis-backed RateLimitStore (see src/lib/rate-limit.ts)
+  # when scaling the app horizontally.
+  # redis:
+  #   image: redis:7-alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+
+volumes:
+  pgdata:
