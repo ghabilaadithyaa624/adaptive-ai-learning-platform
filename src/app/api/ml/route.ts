@@ -12,6 +12,7 @@ import { badRequest } from "@/lib/http";
 import { oneOf, readJsonBody } from "@/lib/validation";
 import { assertStudentAccess, requireCapability } from "@/lib/authz";
 import { recordAudit } from "@/lib/audit";
+import { events, now } from "@/lib/observability";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +37,23 @@ export async function POST(request: Request) {
     const action = oneOf(body.action, ["train", "predict", "evaluate"] as const, "action", "train");
 
     if (action === "train") {
-      const { model, promotion, datasetVersion, featureVersion, heldOutSamples } = await trainAndPersistClassifier();
+      const trainStart = now();
+      let trained;
+      try {
+        trained = await trainAndPersistClassifier();
+      } catch (error) {
+        events.modelError("difficulty-classifier", "train", error);
+        throw error;
+      }
+      const { model, promotion, datasetVersion, featureVersion, heldOutSamples } = trained;
+      events.modelTrained({
+        model: "difficulty-classifier",
+        version: model.version,
+        samples: model.samples,
+        verdict: promotion.verdict,
+        promote: promotion.promote,
+        durationMs: Math.round(now() - trainStart),
+      });
       const [models, evaluations] = await Promise.all([getModelRegistry(), getModelEvaluations("difficulty-classifier", 10)]);
       await recordAudit({
         actor: user,
@@ -121,6 +138,14 @@ export async function POST(request: Request) {
           evidence: skill.evidence,
         });
         return { name: scenario.name, probability: round(probability, 3), label: labelPrediction(probability) };
+      });
+
+      events.modelPrediction({
+        model: "difficulty-classifier",
+        surface: "api",
+        count: predictions.length,
+        studentId,
+        questionId,
       });
 
       return ok({

@@ -9,6 +9,7 @@ import { conflict } from "@/lib/http";
 import { readJsonBody } from "@/lib/validation";
 import { accessibleStudentIds, assertStudentAccess, isStudent, resolveWritableStudentId } from "@/lib/authz";
 import { recordAudit } from "@/lib/audit";
+import { events } from "@/lib/observability";
 
 export const dynamic = "force-dynamic";
 
@@ -77,7 +78,10 @@ export async function POST(request: Request) {
         status: "new",
       }));
 
-    if (!values.length) return ok({ recommendations: [], message: "No new priorities — learner is on top of every tracked skill." });
+    if (!values.length) {
+      events.recommendationsGenerated({ studentId, generated: 0 });
+      return ok({ recommendations: [], message: "No new priorities — learner is on top of every tracked skill." });
+    }
     const inserted = await db.insert(recommendations).values(values).returning();
     await logActivity({
       studentId,
@@ -92,6 +96,7 @@ export async function POST(request: Request) {
       targetStudentId: studentId,
       ip,
     });
+    events.recommendationsGenerated({ studentId, generated: inserted.length });
     const rows = await getRecommendations({ studentId });
     return ok({ recommendations: rows, generated: inserted.length }, 201);
   });

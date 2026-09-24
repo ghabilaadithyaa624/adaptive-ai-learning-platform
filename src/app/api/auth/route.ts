@@ -9,6 +9,7 @@ import { oneOf, optString, readJsonBody, reqEmail, reqString, validatePassword }
 import { rateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { recordAudit } from "@/lib/audit";
 import { PUBLIC_SIGNUP_ROLE } from "@/lib/authz";
+import { events, updateContext } from "@/lib/observability";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,6 +26,7 @@ export async function POST(request: Request) {
       const current = await getCurrentUser();
       await destroySession();
       await recordAudit({ actor: current, action: "auth.logout", resource: "auth", ip });
+      events.auth("logout", "success", { userId: current?.id, role: current?.role });
       return ok({ signedOut: true });
     }
 
@@ -69,6 +71,8 @@ export async function POST(request: Request) {
         resourceId: created.id,
         ip,
       });
+      updateContext({ userId: created.id, role: created.role });
+      events.auth("register", "success", { userId: created.id, role: created.role, email: created.email });
       return ok({ user: { id: created.id, name: created.name, role: created.role } }, 201);
     }
 
@@ -86,6 +90,7 @@ export async function POST(request: Request) {
       // Second, tighter limit keyed on the email to slow targeted attacks.
       rateLimit(`login-email:${email}`, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs);
       await recordAudit({ action: "auth.login", outcome: "denied", ip, detail: `failed login for ${email}` });
+      events.auth("login", "failure", { email, reason: "invalid_credentials" });
       throw unauthorized("Those credentials did not match our records.");
     }
     if (user.status === "suspended") {
@@ -96,6 +101,7 @@ export async function POST(request: Request) {
         ip,
         detail: "suspended account",
       });
+      events.auth("login", "denied", { userId: user.id, role: user.role, reason: "suspended" });
       throw forbidden("This account is suspended. Contact your administrator.");
     }
 
@@ -106,6 +112,8 @@ export async function POST(request: Request) {
       resource: "auth",
       ip,
     });
+    updateContext({ userId: user.id, role: user.role });
+    events.auth("login", "success", { userId: user.id, role: user.role, email: user.email });
     return ok({ user: { id: user.id, name: user.name, role: user.role } });
   });
 }

@@ -1,0 +1,141 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus data source scraping /api/metrics",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "annotations": { "list": [] },
+  "editable": true,
+  "schemaVersion": 39,
+  "title": "AdaptIQ · Platform Observability",
+  "tags": ["adaptiq", "observability"],
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "templating": { "list": [] },
+  "panels": [
+    { "type": "row", "title": "Golden signals", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 } },
+    {
+      "type": "timeseries",
+      "title": "Request rate (by route)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "targets": [
+        { "expr": "sum(rate(adaptiq_http_requests_total[5m])) by (route)", "legendFormat": "{{route}}" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "API error rate (5xx %)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.01 }, { "color": "red", "value": 0.02 } ] } } },
+      "targets": [
+        { "expr": "sum(rate(adaptiq_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(adaptiq_http_requests_total[5m])), 1e-9)", "legendFormat": "5xx rate" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "API latency p50 / p95 / p99",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum(rate(adaptiq_http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(adaptiq_http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(adaptiq_http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+      ]
+    },
+
+    { "type": "row", "title": "Learning domain", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 } },
+    {
+      "type": "timeseries",
+      "title": "Assessments started vs completed vs abandoned",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "targets": [
+        { "expr": "sum(rate(adaptiq_assessments_started_total[15m]))", "legendFormat": "started" },
+        { "expr": "sum(rate(adaptiq_assessments_completed_total{outcome=\"completed\"}[15m]))", "legendFormat": "completed" },
+        { "expr": "sum(rate(adaptiq_assessments_completed_total{outcome=\"abandoned\"}[15m]))", "legendFormat": "abandoned" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Adaptive selection latency p95 & question response time p95",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum(rate(adaptiq_adaptive_selection_duration_seconds_bucket[5m])) by (le))", "legendFormat": "selection p95" },
+        { "expr": "histogram_quantile(0.95, sum(rate(adaptiq_question_response_time_seconds_bucket[5m])) by (le))", "legendFormat": "response time p95" }
+      ]
+    },
+
+    { "type": "row", "title": "Machine learning", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 } },
+    {
+      "type": "timeseries",
+      "title": "Model prediction volume (by surface)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 19 },
+      "targets": [
+        { "expr": "sum(rate(adaptiq_model_predictions_total[5m])) by (surface)", "legendFormat": "{{surface}}" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Model error rate",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 19 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.05 } ] } } },
+      "targets": [
+        { "expr": "sum(rate(adaptiq_model_errors_total[15m])) / clamp_min(sum(rate(adaptiq_model_predictions_total[15m])), 1e-9)", "legendFormat": "error rate" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Recommendation acceptance rate",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 19 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [
+        { "expr": "sum(rate(adaptiq_recommendation_actions_total{status=\"accepted\"}[1h])) / clamp_min(sum(rate(adaptiq_recommendation_actions_total{status=~\"accepted|dismissed\"}[1h])), 1e-9)", "legendFormat": "acceptance" }
+      ]
+    },
+
+    { "type": "row", "title": "Data layer & auth", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 } },
+    {
+      "type": "timeseries",
+      "title": "DB query latency p95 (by op)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 28 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum(rate(adaptiq_db_query_duration_seconds_bucket[5m])) by (le, op))", "legendFormat": "{{op}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "DB connection pool",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 28 },
+      "targets": [
+        { "expr": "adaptiq_db_pool_connections{state=\"total\"}", "legendFormat": "total" },
+        { "expr": "adaptiq_db_pool_connections{state=\"idle\"}", "legendFormat": "idle" },
+        { "expr": "adaptiq_db_pool_connections{state=\"waiting\"}", "legendFormat": "waiting" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Auth events (by action/outcome)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 28 },
+      "targets": [
+        { "expr": "sum(rate(adaptiq_auth_events_total[15m])) by (action, outcome)", "legendFormat": "{{action}}/{{outcome}}" }
+      ]
+    }
+  ]
+}

@@ -18,6 +18,7 @@ import { buildLearnerState, type RawResponse, type RawSkillState } from "@/lib/m
 import { selectNextItemV2 } from "@/lib/ml/selection";
 import { LogisticResponseModel } from "@/lib/ml/models/logistic";
 import { bktModel } from "@/lib/ml/models/bkt";
+import { events, now } from "@/lib/observability";
 import type { CandidateItem } from "@/lib/ml/interfaces";
 import { SERVABLE_STATUSES } from "@/lib/questions/constants";
 import { MASTERY_TARGET, clamp, mean, round } from "@/lib/utils";
@@ -88,6 +89,7 @@ function buildSample(params: {
 
 /** Choose (and persist) the next adaptive item for an in-progress assessment. */
 export async function computeNextSessionQuestion(assessmentId: number): Promise<SessionQuestion | null> {
+  const selectionStart = now();
   const assessmentRows = await db.select().from(assessments).where(eq(assessments.id, assessmentId)).limit(1);
   const assessment = assessmentRows[0];
   if (!assessment || assessment.status !== "in_progress") return null;
@@ -257,7 +259,16 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     target: MASTERY_TARGET,
   });
 
-  if (!chosen) return null;
+  if (!chosen) {
+    events.selectionExhausted({
+      assessmentId,
+      studentId: assessment.studentId,
+      durationMs: Math.round(now() - selectionStart),
+    });
+    return null;
+  }
+  // One batched scoring pass over the candidate pool feeds the selection.
+  events.modelPrediction({ model: "difficulty-classifier", surface: "selection", count: candidates.length });
 
   const questionRow = candidateRows.find((row) => row.question.id === chosen.candidate.questionId);
   const skill = await loadSkillFeatures(assessment.studentId, chosen.candidate.skillId);
@@ -275,6 +286,18 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
       responseTimeMs: 0,
     })
     .returning();
+
+  events.questionSelected({
+    assessmentId,
+    studentId: assessment.studentId,
+    itemId: item.id,
+    questionId: chosen.candidate.questionId,
+    skillId: chosen.candidate.skillId,
+    sequence: item.sequence,
+    predictedSuccess: round(chosen.predictedCorrect, 3),
+    informationGain: round(chosen.information, 2),
+    durationMs: Math.round(now() - selectionStart),
+  });
 
   return {
     itemId: item.id,
@@ -362,6 +385,14 @@ export async function gradeItem(params: {
     }),
   );
 
+  events.modelPrediction({
+    model: "difficulty-classifier",
+    surface: "grading",
+    studentId: assessment.studentId,
+    questionId: row.question.id,
+    probability: round(predicted, 3),
+  });
+
   const isCorrect = params.studentAnswer !== null && params.studentAnswer === row.question.correctIndex;
   const masteryBefore = skill.mastery;
   // Use the per-skill BKT parameters persisted on the mastery state when
@@ -377,6 +408,24 @@ export async function gradeItem(params: {
     : DEFAULT_BKT;
   const masteryAfter = posterior(masteryBefore, isCorrect, bktParams);
   const nowDate = new Date();
+
+  events.answerSubmitted({
+    assessmentId: params.assessmentId,
+    studentId: assessment.studentId,
+    itemId: row.item.id,
+    questionId: row.question.id,
+    skillId: row.item.skillId,
+    isCorrect,
+    responseTimeMs: params.responseTimeMs,
+    predictedSuccess: round(predicted, 3),
+  });
+  events.masteryUpdated({
+    studentId: assessment.studentId,
+    skillId: row.item.skillId,
+    masteryBefore: round(masteryBefore, 3),
+    masteryAfter: round(masteryAfter, 3),
+    delta: round(masteryAfter - masteryBefore, 3),
+  });
 
   await db
     .update(assessmentItems)
@@ -477,6 +526,15 @@ export async function gradeItem(params: {
       value: score,
     });
 
+    events.assessmentCompleted({
+      assessmentId: params.assessmentId,
+      studentId: assessment.studentId,
+      mode: assessment.mode,
+      outcome: "completed",
+      score,
+      items: answeredItems.length,
+    });
+
     summary = {
       score,
       correct: correctCount,
@@ -532,6 +590,12 @@ export async function startAssessment(params: {
     type: "assessment",
     summary: `Started ${params.title} (${params.itemTarget} adaptive items)`,
     value: 0,
+  });
+  events.assessmentStarted({
+    assessmentId: row.id,
+    studentId: params.studentId,
+    mode: params.mode,
+    itemTarget: params.itemTarget,
   });
   return row;
 }

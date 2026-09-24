@@ -9,6 +9,7 @@ import { round } from "@/lib/utils";
 import { badRequest } from "@/lib/http";
 import { oneOf, parseId, readJsonBody } from "@/lib/validation";
 import { assertAssessmentAccess } from "@/lib/authz";
+import { events } from "@/lib/observability";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,13 @@ export async function POST(request: Request, { params }: Params) {
       const answered = items.filter((item) => item.studentAnswer !== null);
       if (!answered.length) {
         await db.update(assessments).set({ status: "abandoned", completedAt: new Date() }).where(eq(assessments.id, assessmentId));
+        events.assessmentCompleted({
+          assessmentId,
+          studentId: assessment.studentId,
+          mode: assessment.mode,
+          outcome: "abandoned",
+          items: 0,
+        });
         return ok({ abandoned: true, completed: true, summary: null, next: null });
       }
       const correct = answered.filter((item) => item.isCorrect).length;
@@ -44,6 +52,14 @@ export async function POST(request: Request, { params }: Params) {
         .update(assessments)
         .set({ status: "completed", score, completedAt: new Date() })
         .where(eq(assessments.id, assessmentId));
+      events.assessmentCompleted({
+        assessmentId,
+        studentId: assessment.studentId,
+        mode: assessment.mode,
+        outcome: action === "abandon" ? "abandoned" : "completed",
+        score,
+        items: answered.length,
+      });
       await logActivity({
         studentId: assessment.studentId,
         type: "assessment",

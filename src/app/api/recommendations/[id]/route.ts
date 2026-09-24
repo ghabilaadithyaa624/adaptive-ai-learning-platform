@@ -7,6 +7,7 @@ import { badRequest } from "@/lib/http";
 import { oneOf, parseId, readJsonBody } from "@/lib/validation";
 import { assertRecommendationAccess, requireCapability } from "@/lib/authz";
 import { recordAudit } from "@/lib/audit";
+import { events } from "@/lib/observability";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,7 @@ export async function PATCH(request: Request, { params }: Params) {
       value: updated.priority,
     });
     await recordAudit({ actor: user, action: "recommendations.update", resource: "recommendations", resourceId: recId, ip });
+    events.recommendationActed({ studentId: updated.studentId, recommendationId: recId, status });
     return ok({ recommendation: updated });
   });
 }
