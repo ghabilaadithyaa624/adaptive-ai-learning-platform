@@ -25,9 +25,11 @@ was found during this audit and **fixed in place** — see P1-5.
 | Build | `next build` | ✅ PASS (all routes compiled, incl. `/api/tutor`) |
 | Unit + integration + e2e | full `vitest run` (31 files) | ✅ PASS 300/300 |
 | Lint | `eslint .` | ❌ FAIL (exit 1) — 3 errors |
-| Dependency audit | `npm audit` | ❌ 12 vulns (3 critical, 3 high, 6 moderate) |
+| Dependency audit | `npm audit` | ⚠️ runtime/build CVEs **fixed**; 10 dev/test-only remain (need breaking vitest 5 bump → P3-1) |
 
-Lint and dependency-audit gates are **red**. A CI pipeline running these today would block the merge.
+Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build dependency CVEs are resolved; the remaining `npm audit` findings are confined to the test toolchain.
+
+> **Update (2026-09-24):** P0-1, P1-1, and P1-5 have been remediated in this branch (see each entry). The overall verdict below still stands as ❌ NOT production-ready pending the remaining P1 items (migrations, deployment/CI, backups/DR).
 
 ---
 
@@ -35,21 +37,22 @@ Lint and dependency-audit gates are **red**. A CI pipeline running these today w
 
 ### P0 — Critical (blocks production; exploitable)
 
-**P0-1 — Auto-seed creates a platform-admin account with a known hardcoded password**
+**P0-1 — Auto-seed creates a platform-admin account with a known hardcoded password — ✅ FIXED**
 - **Files:** `src/lib/seed.ts` (`ensureSeeded`/`ensureSeededSafe`, `runSeed`, `hashPassword("password123")`), `src/lib/seed-content.ts:228` (`admin@adaptiq.ai`, role `admin`), call sites `src/app/page.tsx:44`, `src/app/login/page.tsx:9`, `src/app/register/page.tsx:9`, `src/app/dashboard/layout.tsx:10`, `src/app/api/auth/route.ts:21`.
 - **Problem:** `ensureSeededSafe()` runs on unauthenticated public pages and the auth route. When the `users` table is empty it seeds demo users — **including `admin@adaptiq.ai` (platform admin) and role-scoped staff — all with `password123`**. There is **no environment guard**: the same code path runs in production. On a fresh prod deployment, the first visit to `/login` silently provisions a platform-admin whose credentials are in the public repo.
 - **Impact:** Complete platform takeover. Anyone can log in as platform admin (`admin@adaptiq.ai` / `password123`) and read/modify all tenants' data, users, and content. Cross-tenant data breach.
-- **Fix:** (1) Gate all auto-seeding behind an explicit opt-in that is off in production, e.g. `if (process.env.NODE_ENV === "production" && process.env.ALLOW_DEMO_SEED !== "true") return;` inside `runSeed`, and move seeding out of request-path pages into an explicit `npm run seed` script. (2) Never ship privileged accounts with static passwords — require the first admin to be created via a one-time bootstrap that forces a strong password (or read it from a secret at seed time). (3) Add a test asserting seeding is a no-op in production mode.
+- **Fix (applied):** `src/lib/seed.ts` now gates all seeding behind `seedingAllowed()` — auto-seed runs outside production, but in production it is a no-op unless `ALLOW_DEMO_SEED=true`. `ensureSeeded()` short-circuits before touching the DB, so public page loads no longer trigger seeding in prod. `resolveSeedPassword()` refuses to seed in production without a strong `SEED_PASSWORD` (>= 12 chars) and never falls back to the hardcoded `password123` there. Documented in `.env.example`.
+- **Residual recommendation:** move seeding out of request-path pages into an explicit `npm run seed` script, and for real production tenants create the first admin via a one-time bootstrap that forces a strong password.
 
 ---
 
 ### P1 — Production blocker (must fix before launch; not necessarily a live exploit)
 
-**P1-1 — Critical/high dependency CVEs in runtime & build path**
+**P1-1 — Critical/high dependency CVEs in runtime & build path — ✅ FIXED**
 - **Files:** `package.json` / `package-lock.json`.
-- **Problem:** `npm audit` reports `next` **CRITICAL** (middleware/proxy authorization bypass in App Router + Turbopack), `postcss` **HIGH** (build), `sharp` **HIGH** (Next image optimization). (Remaining vitest/vite/esbuild/@esbuild-kit CVEs are dev/test-only → see P3-1.)
-- **Impact:** The Next CVE can bypass authorization checks performed in middleware; postcss/sharp affect the build and image pipeline.
-- **Fix:** Upgrade `next` to a patched release (requires bumping beyond the currently pinned range), then `npm audit fix`; re-run all gates. Confirm no middleware auth logic relies on the vulnerable behavior.
+- **Problem:** `npm audit` reported `next` **CRITICAL** (middleware/proxy authorization bypass in App Router + Turbopack, plus SSRF/RCE/cache-confusion advisories), `postcss` **HIGH** (build), `sharp` **HIGH** (Next image optimization).
+- **Impact:** The Next CVEs can bypass authorization performed in middleware; postcss/sharp affect the build and image pipeline.
+- **Fix (applied):** Upgraded `next` 16.2.6 → **16.3.6** (and `eslint-config-next` to match), and `postcss` 8.5.8 → **8.5.28**; `sharp` was transitively patched by the Next bump. Re-verified: typecheck ✅, build ✅, **300/300** tests ✅. `npm audit` now reports **no runtime/build CVEs** — only dev/test-only tooling remains (see P3-1).
 
 **P1-2 — No versioned database migrations**
 - **Files:** no `drizzle/` migration dir; `package.json` scripts (no `db:generate`/`db:migrate`); `tests/setup/global.ts` uses `drizzle-kit push --force`.

@@ -35,7 +35,40 @@ const SEED_INSTITUTIONS = [
 
 const AVATAR_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#8b5cf6", "#14b8a6", "#ef4444"];
 
+/**
+ * Whether the demo dataset may be auto-seeded in the current environment.
+ *
+ * Outside production we always allow it — the demo data is what makes the
+ * preview/dev experience useful. In production auto-seeding is DISABLED unless
+ * an operator explicitly opts in with `ALLOW_DEMO_SEED=true`, so a fresh prod
+ * database is never silently populated with demo accounts on the first request.
+ */
+export function seedingAllowed(): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+  return process.env.ALLOW_DEMO_SEED === "true";
+}
+
+/**
+ * Resolve the password used for seeded demo accounts. In production the caller
+ * must supply a strong `SEED_PASSWORD` (>= 12 chars) — we never fall back to a
+ * hardcoded, publicly-known password for privileged accounts there. Outside
+ * production we default to a well-known demo password for convenience.
+ */
+function resolveSeedPassword(): string {
+  const configured = process.env.SEED_PASSWORD;
+  if (process.env.NODE_ENV === "production") {
+    if (!configured || configured.length < 12) {
+      throw new Error(
+        "Refusing to seed demo accounts in production without a strong SEED_PASSWORD (>= 12 characters).",
+      );
+    }
+    return configured;
+  }
+  return configured && configured.length >= 8 ? configured : "password123";
+}
+
 async function runSeed() {
+  if (!seedingAllowed()) return;
   const existing = await db.select({ total: sql<number>`count(*)::int` }).from(users);
   if (Number(existing[0]?.total ?? 0) > 0) return;
 
@@ -48,7 +81,7 @@ async function runSeed() {
   const institutionRows = await db.insert(institutions).values(SEED_INSTITUTIONS).returning();
 
   /* ---------------- users ---------------- */
-  const passwordHash = hashPassword("password123");
+  const passwordHash = hashPassword(resolveSeedPassword());
   const studentRows = await db
     .insert(users)
     .values(
@@ -620,6 +653,7 @@ const globalForSeed = globalThis as typeof globalThis & {
 };
 
 export function ensureSeeded() {
+  if (!seedingAllowed()) return Promise.resolve();
   if (!globalForSeed.__adaptiqSeedPromise) {
     globalForSeed.__adaptiqSeedPromise = runSeed().catch((error) => {
       globalForSeed.__adaptiqSeedPromise = undefined;
