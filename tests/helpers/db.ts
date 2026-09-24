@@ -19,6 +19,7 @@ export const describeDb = hasDatabase ? describe : describe.skip;
 /** Tables in FK-safe truncation order (children first is unnecessary with CASCADE). */
 const ALL_TABLES = [
   "audit_logs",
+  "tutor_interactions",
   "activity_events",
   "model_evaluations",
   "ml_models",

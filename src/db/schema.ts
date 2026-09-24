@@ -352,6 +352,56 @@ export const auditLogs = pgTable("audit_logs", {
   index("audit_created_idx").on(t.createdAt),
 ]);
 
+/* ------------------------------------------------------------------ */
+/* AI tutor interactions                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Every AI-tutor exchange is recorded as a learning event so its downstream
+ * impact can be evaluated (does tutoring on a skill precede a mastery gain?).
+ *
+ * IMPORTANT ARCHITECTURE INVARIANT: the tutor is a *read-only* consumer of the
+ * learner model. It NEVER writes `mastery_states`, `assessment_items` or
+ * `assessments` — the deterministic engine remains the single source of truth.
+ * This table (plus a lightweight `activity_events` row) is the only persistence
+ * the tutor performs. `masteryAtTime` is a read-only SNAPSHOT captured for later
+ * correlation, not an input the LLM can mutate.
+ */
+export const tutorInteractions = pgTable("tutor_interactions", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").notNull(),
+  /** Skill the exchange was grounded in (null for skill-agnostic requests). */
+  skillId: integer("skill_id"),
+  /** Assessment the exchange was tied to, when tutoring happens mid-session. */
+  assessmentId: integer("assessment_id"),
+  /** Assessment item in play, when the request references a specific item. */
+  itemId: integer("item_id"),
+  /** Capability actually served (may differ from the requested one — see policy). */
+  intent: text("intent").notNull(), // explain | hint | socratic | worked_example | diagnose | remediate | next_activity
+  /** The intent the learner asked for, before policy adjustments. */
+  requestedIntent: text("requested_intent"),
+  /** Difficulty register the response was pitched at. */
+  difficulty: text("difficulty").notNull().default("core"), // foundational | core | stretch
+  /** Read-only snapshot of decayed mastery at request time (for later eval). */
+  masteryAtTime: real("mastery_at_time"),
+  /** True when the answer key was deliberately withheld (active assessment). */
+  withheldAnswer: boolean("withheld_answer").notNull().default(false),
+  /** Which generation backend produced the response. */
+  provider: text("provider").notNull().default("deterministic"),
+  model: text("model"),
+  latencyMs: integer("latency_ms").notNull().default(0),
+  responseChars: integer("response_chars").notNull().default(0),
+  /** Post-generation safety findings (e.g. leaked_answer_redacted). */
+  safetyFlags: jsonb("safety_flags").$type<string[]>().notNull().default([]),
+  /** Optional learner feedback for later usefulness analysis. */
+  helpful: boolean("helpful"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("tutor_interactions_student_created_idx").on(t.studentId, t.createdAt.desc()),
+  index("tutor_interactions_skill_idx").on(t.skillId),
+  index("tutor_interactions_assessment_idx").on(t.assessmentId),
+]);
+
 export const activityEvents = pgTable("activity_events", {
   id: serial("id").primaryKey(),
   studentId: integer("student_id"),
@@ -385,3 +435,4 @@ export type MlModel = typeof mlModels.$inferSelect;
 export type ModelEvaluation = typeof modelEvaluations.$inferSelect;
 export type ActivityEvent = typeof activityEvents.$inferSelect;
 export type AuditLog = typeof auditLogs.$inferSelect;
+export type TutorInteraction = typeof tutorInteractions.$inferSelect;

@@ -244,6 +244,22 @@ export const metrics = {
     ),
   ),
 
+  // ---- AI tutor ----
+  tutorInteractionsTotal: registry.register(
+    new Counter("adaptiq_tutor_interactions_total", "AI-tutor interactions served.", ["intent", "provider"]),
+  ),
+  tutorLatency: registry.register(
+    new Histogram("adaptiq_tutor_latency_seconds", "End-to-end tutor response latency in seconds.", LATENCY_BUCKETS, [
+      "provider",
+    ]),
+  ),
+  tutorAnswersWithheldTotal: registry.register(
+    new Counter("adaptiq_tutor_answers_withheld_total", "Tutor responses where the answer key was withheld."),
+  ),
+  tutorFallbacksTotal: registry.register(
+    new Counter("adaptiq_tutor_fallbacks_total", "Tutor responses that fell back to the deterministic composer."),
+  ),
+
   // ---- ML: predictions & training ----
   modelPredictionsTotal: registry.register(
     new Counter("adaptiq_model_predictions_total", "Model predictions served.", ["model", "surface"]),

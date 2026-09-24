@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { AssessmentTable } from "@/components/assessments-client";
 import { Avatar, Badge, buttonClass, Card, CardHeader, EmptyState, KeyValue, ProgressBar } from "@/components/ui";
 import { QuizRunner } from "@/components/quiz-runner";
+import { TutorPanel } from "@/components/tutor-panel";
 import { requireUser } from "@/lib/auth";
 import { computeNextSessionQuestion } from "@/lib/engine";
 import { getAssessment, listAssessments } from "@/lib/queries";
@@ -81,14 +82,24 @@ export default async function AssessmentDetailPage({ params }: { params: Promise
       </Card>
 
       {inProgress ? (
-        <QuizRunner
-          assessmentId={assessmentId}
-          initialQuestion={next}
-          initialProgress={{ answered: answered.length, total: detail.assessment.itemTarget, correct }}
-          learnerName={detail.studentName}
-          title={detail.assessment.title}
-          mode={detail.assessment.mode}
-        />
+        <div className="grid gap-4 lg:grid-cols-3">
+          <div className="lg:col-span-2">
+            <QuizRunner
+              assessmentId={assessmentId}
+              initialQuestion={next}
+              initialProgress={{ answered: answered.length, total: detail.assessment.itemTarget, correct }}
+              learnerName={detail.studentName}
+              title={detail.assessment.title}
+              mode={detail.assessment.mode}
+            />
+          </div>
+          <TutorPanel
+            studentId={detail.assessment.studentId}
+            assessmentId={assessmentId}
+            skillId={next?.skillId}
+            contextLabel="answers hidden during this session"
+          />
+        </div>
       ) : (
         <Card>
           <CardHeader title="Item-level review" subtitle="Model prediction versus realised outcome for each item" />

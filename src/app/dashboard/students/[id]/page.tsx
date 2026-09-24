@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ActionButton } from "@/components/action-button";
 import { AddLearnerButton, LearnerRowActions } from "@/components/learner-admin";
 import { StudentOverview } from "@/components/student-overview";
+import { TutorPanel } from "@/components/tutor-panel";
 import { buttonClass, Card, CardHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
 import { getStudentDetail } from "@/lib/queries";
@@ -67,6 +68,11 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
           </div>
         )}
       </Card>
+
+      <TutorPanel
+        studentId={detail.student.id}
+        contextLabel={isSelf ? undefined : `coaching ${detail.student.name}`}
+      />
 
       <StudentOverview detail={detail} isSelf={isSelf} />
     </div>

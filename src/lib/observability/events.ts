@@ -112,6 +112,36 @@ export const events = {
     log.info("recommendation.acted", f);
   },
 
+  // ---- AI tutor ----
+  tutorInteraction(f: {
+    studentId: number;
+    skillId: number | null;
+    intent: string;
+    requestedIntent: string;
+    provider: string;
+    withheldAnswer: boolean;
+    adjustedIntent: boolean;
+    latencyMs: number;
+    fallback: boolean;
+  }): void {
+    metrics.tutorInteractionsTotal.inc({ intent: f.intent, provider: f.provider });
+    metrics.tutorLatency.observe(f.latencyMs / 1000, { provider: f.provider });
+    if (f.withheldAnswer) metrics.tutorAnswersWithheldTotal.inc({});
+    if (f.fallback) metrics.tutorFallbacksTotal.inc({});
+    // Opaque identifiers + enum-like values only — never the learner's prose.
+    log.info("tutor.interaction", {
+      studentId: f.studentId,
+      skillId: f.skillId ?? undefined,
+      intent: f.intent,
+      requestedIntent: f.requestedIntent,
+      adjustedIntent: f.adjustedIntent,
+      provider: f.provider,
+      withheldAnswer: f.withheldAnswer,
+      fallback: f.fallback,
+      latencyMs: f.latencyMs,
+    });
+  },
+
   // ---- ML predictions ----
   modelPrediction(f: {
     model: string;
