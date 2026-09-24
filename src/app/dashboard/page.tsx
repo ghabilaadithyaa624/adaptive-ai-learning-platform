@@ -7,12 +7,12 @@ import { requireUser } from "@/lib/auth";
 import {
   getActivity,
   getCohortSnapshot,
-  getInstitutionList,
   getModelRegistry,
   getStudentDetail,
-  listStudents,
 } from "@/lib/queries";
 import { formatRelative, masteryBand, pct } from "@/lib/utils";
+import { institutionScopeId, scopedInstitutions, scopedLearners } from "@/lib/page-guards";
+import { accessibleStudentIds } from "@/lib/authz";
 
 export const dynamic = "force-dynamic";
 
@@ -44,12 +44,14 @@ export default async function DashboardPage() {
     return <StudentOverview detail={detail} isSelf />;
   }
 
+  const scopeId = institutionScopeId(user);
+  const scopeIds = await accessibleStudentIds(user);
   const [snapshot, learners, activity, models, institutionList] = await Promise.all([
-    getCohortSnapshot(),
-    listStudents(),
-    getActivity(undefined, 10),
+    getCohortSnapshot(scopeId),
+    scopedLearners(user),
+    getActivity(undefined, 10, scopeIds ?? undefined),
     getModelRegistry(),
-    getInstitutionList(),
+    scopedInstitutions(user),
   ]);
 
   const classifier = models.find((model) => model.kind === "classifier");

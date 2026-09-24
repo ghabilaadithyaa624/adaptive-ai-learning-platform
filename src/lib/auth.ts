@@ -1,29 +1,34 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { sessions, users, type User } from "@/db/schema";
 
 const SESSION_COOKIE = "adaptiq_session";
 const SESSION_TTL_DAYS = 14;
+const SCRYPT_KEYLEN = 64;
+const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 } as const;
+const isProd = process.env.NODE_ENV === "production";
 
 export function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
-  const hash = scryptSync(password, salt, 64).toString("hex");
+  const hash = scryptSync(password, salt, SCRYPT_KEYLEN, SCRYPT_PARAMS).toString("hex");
   return `${salt}:${hash}`;
 }
 
 export function verifyPassword(password: string, stored: string) {
   const [salt, hash] = stored.split(":");
   if (!salt || !hash) return false;
-  const candidate = scryptSync(password, salt, 64);
+  const candidate = scryptSync(password, salt, SCRYPT_KEYLEN, SCRYPT_PARAMS);
   const expected = Buffer.from(hash, "hex");
   if (candidate.length !== expected.length) return false;
   return timingSafeEqual(candidate, expected);
 }
 
 export async function createSession(userId: number) {
+  // Rotate: drop any expired sessions opportunistically and issue a fresh token.
+  await db.delete(sessions).where(lt(sessions.expiresAt, new Date())).catch(() => {});
   const token = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + SESSION_TTL_DAYS * 86_400_000);
   await db.insert(sessions).values({ token, userId, expiresAt });
@@ -31,6 +36,7 @@ export async function createSession(userId: number) {
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
+    secure: isProd, // only sent over HTTPS in production
     path: "/",
     expires: expiresAt,
   });
@@ -46,6 +52,11 @@ export async function destroySession() {
   store.delete(SESSION_COOKIE);
 }
 
+/** Revoke every server-side session for a user (e.g. after a password change or suspension). */
+export async function revokeUserSessions(userId: number) {
+  await db.delete(sessions).where(eq(sessions.userId, userId));
+}
+
 export async function getCurrentUser(): Promise<User | null> {
   try {
     const store = await cookies();
@@ -57,7 +68,10 @@ export async function getCurrentUser(): Promise<User | null> {
       .innerJoin(users, eq(users.id, sessions.userId))
       .where(and(eq(sessions.token, token), gt(sessions.expiresAt, new Date())))
       .limit(1);
-    return rows[0]?.user ?? null;
+    const user = rows[0]?.user ?? null;
+    // Deny access to suspended accounts even if they hold a valid session token.
+    if (user && user.status === "suspended") return null;
+    return user;
   } catch {
     return null;
   }

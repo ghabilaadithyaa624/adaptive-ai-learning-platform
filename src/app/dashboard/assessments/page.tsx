@@ -3,7 +3,9 @@ import { AssessmentTable, StartAssessmentButton } from "@/components/assessments
 import { LearnerFilter } from "@/components/learner-filter";
 import { Card, CardHeader, StatCard } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
-import { listAssessments, listStudents } from "@/lib/queries";
+import { listAssessments } from "@/lib/queries";
+import { resolveFocusStudent, scopedLearners } from "@/lib/page-guards";
+import { accessibleStudentIds } from "@/lib/authz";
 import { pct } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -15,8 +17,12 @@ export default async function AssessmentsPage({
 }) {
   const [user, params] = await Promise.all([requireUser(), searchParams]);
   const requested = params.studentId ? Number(params.studentId) : undefined;
-  const studentId = user.role === "student" ? user.id : requested;
-  const [assessments, learners] = await Promise.all([listAssessments(studentId, 60), listStudents()]);
+  const studentId = await resolveFocusStudent(user, requested);
+  const scopeIds = await accessibleStudentIds(user);
+  const [assessments, learners] = await Promise.all([
+    studentId ? listAssessments(studentId, 60) : listAssessments(undefined, 60, scopeIds ?? undefined),
+    scopedLearners(user),
+  ]);
 
   const live = assessments.filter((assessment) => assessment.status === "in_progress");
   const completed = assessments.filter((assessment) => assessment.status === "completed");

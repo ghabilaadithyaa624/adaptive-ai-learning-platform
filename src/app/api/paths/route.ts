@@ -1,30 +1,45 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { learningPaths, pathMilestones, skills, subjects } from "@/db/schema";
-import { fail, ok, toNumber, withUser } from "@/lib/api";
+import { ok, toNumber, withAuth } from "@/lib/api";
 import { getPaths, getStudentMastery, logActivity } from "@/lib/queries";
 import { buildLearningPath } from "@/lib/ml/recommender";
 import { MASTERY_TARGET, clamp, round } from "@/lib/utils";
+import { badRequest, conflict } from "@/lib/http";
+import { optBool, readJsonBody } from "@/lib/validation";
+import { accessibleStudentIds, assertStudentAccess, isStudent, resolveWritableStudentId } from "@/lib/authz";
+import { recordAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  return withUser(async (user) => {
+  return withAuth(request, async ({ user }) => {
     const url = new URL(request.url);
     const studentIdParam = url.searchParams.get("studentId");
-    const studentId = user.role === "student" ? user.id : studentIdParam ? Number(studentIdParam) : undefined;
-    const paths = await getPaths(studentId);
-    return ok({ paths });
+
+    if (isStudent(user)) {
+      return ok({ paths: await getPaths(user.id) });
+    }
+    if (studentIdParam) {
+      const studentId = Number(studentIdParam);
+      await assertStudentAccess(user, studentId, "paths.list");
+      return ok({ paths: await getPaths(studentId) });
+    }
+    const ids = await accessibleStudentIds(user);
+    return ok({ paths: await getPaths(undefined, ids ?? undefined) });
   });
 }
 
 export async function POST(request: Request) {
-  return withUser(async (user) => {
-    const body = (await request.json()) as Record<string, unknown>;
-    const studentId = user.role === "student" ? user.id : toNumber(body.studentId, 0);
-    if (!studentId) return fail("Choose a learner to build a path for.");
+  return withAuth(request, async ({ user, ip }) => {
+    const body = await readJsonBody(request);
+    const studentId = await resolveWritableStudentId(
+      user,
+      body.studentId ? toNumber(body.studentId, 0) : undefined,
+      "paths.create",
+    );
     const targetMastery = clamp(toNumber(body.targetMastery, MASTERY_TARGET), 0.5, 0.99);
-    const autoGenerate = body.autoGenerate !== false;
+    const autoGenerate = optBool(body.autoGenerate, true);
 
     const [mastery, skillRows] = await Promise.all([
       getStudentMastery(studentId),
@@ -39,7 +54,7 @@ export async function POST(request: Request) {
     let projected: string | null = null;
 
     if (autoGenerate) {
-      if (!mastery.length) return fail("No mastery evidence yet — run a diagnostic first.", 409);
+      if (!mastery.length) throw conflict("No mastery evidence yet — run a diagnostic first.");
       const built = buildLearningPath({
         skills: mastery.map((row) => ({
           id: row.skillId,
@@ -63,6 +78,7 @@ export async function POST(request: Request) {
         .map((entry) => {
           const skillId = toNumber(entry.skillId, 0);
           const row = skillRows.find((candidate) => candidate.skill.id === skillId);
+          void row;
           const currentMastery = mastery.find((state) => state.skillId === skillId)?.decayed ?? 0;
           return {
             skillId,
@@ -75,14 +91,14 @@ export async function POST(request: Request) {
         .filter((entry) => entry.skillId > 0);
     }
 
-    if (!milestones.length) return fail("Could not assemble any milestones for this learner.");
+    if (!milestones.length) throw badRequest("Could not assemble any milestones for this learner.");
 
     const [path] = await db
       .insert(learningPaths)
       .values({
         studentId,
-        title: String(body.title ?? "").trim() || "Personalised mastery plan",
-        objective: String(body.objective ?? "Close the highest-priority knowledge gaps."),
+        title: String(body.title ?? "").trim().slice(0, 200) || "Personalised mastery plan",
+        objective: String(body.objective ?? "Close the highest-priority knowledge gaps.").slice(0, 500),
         status: String(body.status ?? "active"),
         strategy: autoGenerate ? "gap-ordered-topological" : "manual",
         targetMastery,
@@ -109,6 +125,7 @@ export async function POST(request: Request) {
       summary: `Learning path “${path.title}” generated with ${milestones.length} milestones`,
       value: round(progress, 2),
     });
+    await recordAudit({ actor: user, action: "paths.create", resource: "paths", resourceId: path.id, targetStudentId: studentId, ip });
 
     const paths = await getPaths(studentId);
     return ok({ path: paths.find((row) => row.id === path.id) ?? null, paths }, 201);

@@ -24,8 +24,8 @@ const NAV: { href: string; label: string; icon: string; roles?: string[]; studen
   { href: "/dashboard/recommendations", label: "Recommendations", icon: "★" },
   { href: "/dashboard/analytics", label: "Progress analytics", icon: "▲" },
   { href: "/dashboard/skills", label: "Skill catalog", icon: "▤" },
-  { href: "/dashboard/questions", label: "Question bank", icon: "?" },
-  { href: "/dashboard/models", label: "AI models", icon: "⚙" },
+  { href: "/dashboard/questions", label: "Question bank", icon: "?", roles: ["teacher", "trainer", "institution", "admin"] },
+  { href: "/dashboard/models", label: "AI models", icon: "⚙", roles: ["teacher", "trainer", "institution", "admin"] },
   { href: "/dashboard/admin", label: "Administration", icon: "⛭", roles: ["admin", "institution"] },
 ];
 

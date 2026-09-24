@@ -4,7 +4,8 @@ import { BarList } from "@/components/charts";
 import { LearnerFilter } from "@/components/learner-filter";
 import { Avatar, Badge, buttonClass, Card, CardHeader, EmptyState, ProgressBar, StatCard } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
-import { buildGapReadouts, getStudentDetail, getStudentMastery, listStudents } from "@/lib/queries";
+import { buildGapReadouts, getStudentDetail, getStudentMastery } from "@/lib/queries";
+import { resolveFocusStudent, scopedLearners } from "@/lib/page-guards";
 import { severityLabel, severityTone, type GapSeverity } from "@/lib/ml/gaps";
 import { pct } from "@/lib/utils";
 
@@ -15,8 +16,8 @@ const SEVERITY_ORDER: GapSeverity[] = ["critical", "high", "moderate", "watch", 
 export default async function GapsPage({ searchParams }: { searchParams: Promise<{ studentId?: string; severity?: string }> }) {
   const [user, params] = await Promise.all([requireUser(), searchParams]);
   const requested = params.studentId ? Number(params.studentId) : undefined;
-  const scoped = user.role === "student" ? user.id : requested;
-  const [learners, mastery] = await Promise.all([listStudents(), scoped ? getStudentMastery(scoped) : Promise.resolve([])]);
+  const scoped = await resolveFocusStudent(user, requested);
+  const [learners, mastery] = await Promise.all([scopedLearners(user), scoped ? getStudentMastery(scoped) : Promise.resolve([])]);
   const detail = scoped ? await getStudentDetail(scoped) : null;
   const gaps = buildGapReadouts(mastery);
   const severityFilter = params.severity as GapSeverity | undefined;

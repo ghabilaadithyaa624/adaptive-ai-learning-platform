@@ -1,48 +1,74 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { masteryStates, skills, users } from "@/db/schema";
-import { fail, ok, toNumber, withUser } from "@/lib/api";
+import { ok, toNumber, withAuth } from "@/lib/api";
 import { hashPassword } from "@/lib/auth";
 import { listStudents } from "@/lib/queries";
 import { buildLearningPath, rankSkills } from "@/lib/ml/recommender";
 import { clamp, round } from "@/lib/utils";
+import { conflict, forbidden } from "@/lib/http";
+import { optString, readJsonBody, reqEmail, reqString, validatePassword } from "@/lib/validation";
+import { isPlatformAdmin, requireCapability, studentScope } from "@/lib/authz";
+import { recordAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  return withUser(async () => {
+  return withAuth(request, async ({ user }) => {
+    // Learner listing is a staff-facing directory; students cannot enumerate.
+    requireCapability(user, "manageStudents", "You do not have permission to list learners.", "students.list");
+
     const url = new URL(request.url);
     const search = url.searchParams.get("q") ?? undefined;
-    const institutionId = url.searchParams.get("institutionId");
-    const students = await listStudents(search, institutionId ? Number(institutionId) : undefined);
+
+    const scope = studentScope(user);
+    // Tenant isolation: non-platform-admins are pinned to their own institution
+    // regardless of any institutionId query param they attempt to pass.
+    const institutionId = scope.kind === "institution" ? scope.institutionId : undefined;
+    if (scope.kind === "none") return ok({ students: [] });
+
+    const students = await listStudents(search, isPlatformAdmin(user) ? undefined : institutionId);
     return ok({ students });
   });
 }
 
 export async function POST(request: Request) {
-  return withUser(async (user) => {
-    if (user.role === "student") return fail("Only educators and administrators can add learners.", 403);
-    const body = (await request.json()) as Record<string, unknown>;
-    const name = String(body.name ?? "").trim();
-    const email = String(body.email ?? "").trim().toLowerCase();
-    if (!name || !email) return fail("Name and email are required.");
+  return withAuth(request, async ({ user, ip }) => {
+    requireCapability(user, "manageStudents", "Only educators and administrators can add learners.", "students.create");
+    const body = await readJsonBody(request);
+    const name = reqString(body.name, "Name", { max: 120 });
+    const email = reqEmail(body.email);
 
     const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-    if (existing.length) return fail("A learner with that email already exists.", 409);
+    if (existing.length) throw conflict("A learner with that email already exists.");
+
+    // Tenant isolation on create: staff can only add learners to their own
+    // institution. A platform admin may target any institution explicitly.
+    let institutionId: number | null;
+    if (isPlatformAdmin(user)) {
+      institutionId = body.institutionId ? toNumber(body.institutionId, 0) || null : null;
+    } else {
+      const requested = body.institutionId ? toNumber(body.institutionId, 0) || null : null;
+      if (requested != null && requested !== user.institutionId) {
+        throw forbidden("You can only add learners to your own institution.", "students.create");
+      }
+      institutionId = user.institutionId ?? null;
+    }
 
     const ability = clamp(toNumber(body.ability, 0.45), 0.05, 0.95);
+    const password = body.password === undefined ? "Password123" : validatePassword(body.password);
     const [student] = await db
       .insert(users)
       .values({
         name,
         email,
-        passwordHash: hashPassword(String(body.password ?? "password123")),
+        passwordHash: hashPassword(password),
         role: "student",
-        gradeLevel: body.gradeLevel ? String(body.gradeLevel) : null,
-        cohort: body.cohort ? String(body.cohort) : "New Cohort",
-        goal: body.goal ? String(body.goal) : "Complete the personalised mastery plan",
-        institutionId: body.institutionId ? toNumber(body.institutionId, 0) || null : user.institutionId,
-        avatarColor: String(body.avatarColor ?? "#6366f1"),
+        gradeLevel: optString(body.gradeLevel, "gradeLevel", { max: 60 }) ?? null,
+        cohort: optString(body.cohort, "cohort", { max: 120 }) ?? "New Cohort",
+        goal: optString(body.goal, "goal", { max: 300 }) ?? "Complete the personalised mastery plan",
+        institutionId,
+        avatarColor: optString(body.avatarColor, "avatarColor", { max: 16 }) ?? "#6366f1",
       })
       .returning();
 
@@ -98,6 +124,15 @@ export async function POST(request: Request) {
       maxItems: 5,
     });
 
+    await recordAudit({
+      actor: user,
+      action: "students.create",
+      resource: "users",
+      resourceId: student.id,
+      targetStudentId: student.id,
+      institutionId,
+      ip,
+    });
     return ok({ student, priorities: ranked.map((entry) => entry.priority), plan: plan.milestones.length }, 201);
   });
 }

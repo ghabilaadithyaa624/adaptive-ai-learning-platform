@@ -1,29 +1,32 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { assessmentItems, assessments } from "@/db/schema";
-import { fail, ok, toNumber, withUser } from "@/lib/api";
+import { ok, toNumber, withAuth } from "@/lib/api";
 import { gradeItem } from "@/lib/engine";
 import { logActivity } from "@/lib/queries";
 import { forecastPerformance } from "@/lib/ml/forecast";
 import { round } from "@/lib/utils";
+import { badRequest } from "@/lib/http";
+import { oneOf, parseId, readJsonBody } from "@/lib/validation";
+import { assertAssessmentAccess } from "@/lib/authz";
 
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, { params }: Params) {
-  return withUser(async (user) => {
+  return withAuth(request, async ({ user }) => {
     const { id } = await params;
-    const assessmentId = Number(id);
-    const body = (await request.json()) as Record<string, unknown>;
-    const action = String(body.action ?? "answer");
+    const assessmentId = parseId(id);
+    const body = await readJsonBody(request);
+    const action = oneOf(body.action, ["answer", "complete", "abandon"] as const, "action", "answer");
 
+    // Authorization: student-self or same-institution staff / platform admin.
+    const assessmentRef = await assertAssessmentAccess(user, assessmentId, "assessments.answer");
     const rows = await db.select().from(assessments).where(eq(assessments.id, assessmentId)).limit(1);
     const assessment = rows[0];
-    if (!assessment) return fail("Assessment not found", 404);
-    if (user.role === "student" && assessment.studentId !== user.id) {
-      return fail("You can only answer your own sessions.", 403);
-    }
+    if (!assessment) throw badRequest("Assessment not found.");
+    void assessmentRef;
 
     if (action === "complete" || action === "abandon") {
       await db
@@ -63,15 +66,15 @@ export async function POST(request: Request, { params }: Params) {
       });
     }
 
-    if (assessment.status !== "in_progress") return fail("This session is already closed.", 409);
+    if (assessment.status !== "in_progress") throw badRequest("This session is already closed.");
 
     const itemId = toNumber(body.itemId, 0);
-    if (!itemId) return fail("A queued item is required to submit an answer.");
+    if (!itemId) throw badRequest("A queued item is required to submit an answer.");
     const studentAnswer = body.studentAnswer === null || body.studentAnswer === undefined ? null : toNumber(body.studentAnswer, -1);
     const responseTimeMs = Math.max(500, toNumber(body.responseTimeMs, 0));
 
     const result = await gradeItem({ assessmentId, itemId, studentAnswer, responseTimeMs });
-    if ("error" in result) return fail(result.error, 400);
+    if ("error" in result) throw badRequest(result.error);
 
     if (result.completed && result.summary) {
       const priorScores = await db

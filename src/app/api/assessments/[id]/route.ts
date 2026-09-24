@@ -1,63 +1,87 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { assessmentItems, assessments } from "@/db/schema";
-import { fail, ok, toNumber, withUser } from "@/lib/api";
+import { ok, toNumber, withAuth } from "@/lib/api";
 import { computeNextSessionQuestion } from "@/lib/engine";
 import { getAssessment } from "@/lib/queries";
+import { badRequest, forbidden } from "@/lib/http";
+import { oneOf, parseId, readJsonBody } from "@/lib/validation";
+import { assertAssessmentAccess, isStudent, requireCapability } from "@/lib/authz";
+import { recordAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
 
-export async function GET(_request: Request, { params }: Params) {
-  return withUser(async (user) => {
+/**
+ * Redact fields that would let a student see the answer key for an item they
+ * have not yet answered. Answered items keep the key so review/feedback works.
+ */
+function redactItemsForStudent(items: { studentAnswer: number | null; correctIndex: number; explanation: string }[]) {
+  return items.map((item) =>
+    item.studentAnswer === null ? { ...item, correctIndex: -1, explanation: "" } : item,
+  );
+}
+
+export async function GET(request: Request, { params }: Params) {
+  return withAuth(request, async ({ user }) => {
     const { id } = await params;
-    const assessmentId = Number(id);
-    const rows = await db.select().from(assessments).where(eq(assessments.id, assessmentId)).limit(1);
-    const assessment = rows[0];
-    if (!assessment) return fail("Assessment not found", 404);
-    if (user.role === "student" && assessment.studentId !== user.id) {
-      return fail("You can only open your own sessions.", 403);
-    }
+    const assessmentId = parseId(id);
+    const assessment = await assertAssessmentAccess(user, assessmentId, "assessments.read");
+
     const detail = await getAssessment(assessmentId);
-    const next = assessment.status === "in_progress" ? await computeNextSessionQuestion(assessmentId) : null;
+    const isInProgress = assessment.id && detail?.assessment.status === "in_progress";
+    const next = isInProgress ? await computeNextSessionQuestion(assessmentId) : null;
+
+    let items = detail?.items ?? [];
+    // SECURITY: never expose the answer key for a pending/unanswered item.
+    if (isStudent(user)) {
+      items = redactItemsForStudent(items as never) as never;
+    }
+
     const progress = detail
       ? {
           answered: detail.items.filter((item) => item.studentAnswer !== null).length,
-          total: assessment.itemTarget,
+          total: detail.assessment.itemTarget,
           correct: detail.items.filter((item) => item.isCorrect).length,
         }
-      : { answered: 0, total: assessment.itemTarget, correct: 0 };
-    return ok({ assessment: detail?.assessment ?? assessment, studentName: detail?.studentName, items: detail?.items ?? [], progress, next });
+      : { answered: 0, total: 0, correct: 0 };
+    return ok({ assessment: detail?.assessment ?? null, studentName: detail?.studentName, items, progress, next });
   });
 }
 
 export async function PATCH(request: Request, { params }: Params) {
-  return withUser(async (user) => {
-    if (user.role === "student") return fail("Learners cannot edit sessions.", 403);
+  return withAuth(request, async ({ user, ip }) => {
+    requireCapability(user, "manageStudents", "Learners cannot edit sessions.", "assessments.update");
     const { id } = await params;
-    const body = (await request.json()) as Record<string, unknown>;
+    const assessmentId = parseId(id);
+    await assertAssessmentAccess(user, assessmentId, "assessments.update");
+
+    const body = await readJsonBody(request);
     const patch: Partial<typeof assessments.$inferInsert> = {};
-    if (body.title !== undefined) patch.title = String(body.title);
+    if (body.title !== undefined) patch.title = String(body.title).slice(0, 200);
     if (body.itemTarget !== undefined) patch.itemTarget = Math.min(20, Math.max(3, toNumber(body.itemTarget, 8)));
-    if (body.status !== undefined && ["in_progress", "completed", "abandoned"].includes(String(body.status))) {
-      patch.status = String(body.status);
-      if (String(body.status) === "completed") patch.completedAt = new Date();
+    if (body.status !== undefined) {
+      patch.status = oneOf(body.status, ["in_progress", "completed", "abandoned"] as const, "status");
+      if (patch.status === "completed") patch.completedAt = new Date();
     }
-    if (!Object.keys(patch).length) return fail("Nothing to update.");
-    const [updated] = await db.update(assessments).set(patch).where(eq(assessments.id, Number(id))).returning();
-    if (!updated) return fail("Assessment not found", 404);
+    if (!Object.keys(patch).length) throw badRequest("Nothing to update.");
+    const [updated] = await db.update(assessments).set(patch).where(eq(assessments.id, assessmentId)).returning();
+    if (!updated) throw badRequest("Assessment not found.");
+    await recordAudit({ actor: user, action: "assessments.update", resource: "assessments", resourceId: assessmentId, ip });
     return ok({ assessment: updated });
   });
 }
 
-export async function DELETE(_request: Request, { params }: Params) {
-  return withUser(async (user) => {
-    if (user.role === "student") return fail("Learners cannot delete sessions.", 403);
+export async function DELETE(request: Request, { params }: Params) {
+  return withAuth(request, async ({ user, ip }) => {
+    if (isStudent(user)) throw forbidden("Learners cannot delete sessions.", "assessments.delete");
     const { id } = await params;
-    const assessmentId = Number(id);
+    const assessmentId = parseId(id);
+    await assertAssessmentAccess(user, assessmentId, "assessments.delete");
     await db.delete(assessmentItems).where(eq(assessmentItems.assessmentId, assessmentId));
     await db.delete(assessments).where(eq(assessments.id, assessmentId));
+    await recordAudit({ actor: user, action: "assessments.delete", resource: "assessments", resourceId: assessmentId, ip });
     return ok({ deleted: true });
   });
 }

@@ -83,16 +83,86 @@ export const skills = pgTable("skills", {
 export const questions = pgTable("questions", {
   id: serial("id").primaryKey(),
   skillId: integer("skill_id").notNull(),
+  /** Optional finer-grained subskill/topic tag within the skill. */
+  subskill: text("subskill"),
+  /** Question-level prerequisite skills (independent of the skill taxonomy edges). */
+  prerequisiteSkillIds: jsonb("prerequisite_skill_ids").$type<number[]>().notNull().default([]),
   stem: text("stem").notNull(),
   options: jsonb("options").$type<string[]>().notNull().default([]),
   correctIndex: integer("correct_index").notNull().default(0),
   difficultyLabel: text("difficulty_label").notNull().default("medium"), // easy | medium | hard | expert
+  /** Numeric difficulty on a 0..1 scale (authored, later refined by calibration). */
+  difficultyValue: real("difficulty_value").notNull().default(0.55),
   bloomLevel: text("bloom_level").notNull().default("apply"),
+  /** Webb's Depth of Knowledge — recall | skill_concept | strategic_thinking | extended_thinking. */
+  cognitiveComplexity: text("cognitive_complexity").notNull().default("skill_concept"),
   explanation: text("explanation").notNull().default(""),
+  /** Progressive hints shown before revealing the answer. */
+  hints: jsonb("hints").$type<string[]>().notNull().default([]),
+  /** Per-distractor pedagogy: which misconception each wrong option targets. */
+  distractorMeta: jsonb("distractor_meta")
+    .$type<{ optionIndex: number; misconception?: string; rationale?: string }[]>()
+    .notNull()
+    .default([]),
   estimatedSeconds: integer("estimated_seconds").notNull().default(60),
+
+  /* --------------------------- authoring / provenance --------------------------- */
+  authorId: integer("author_id"),
+  source: text("source").notNull().default("human"), // human | ai | imported
+  version: integer("version").notNull().default(1),
+
+  /* ------------------------------- workflow ------------------------------- */
+  status: text("status").notNull().default("draft"), // draft | review | validated | published | monitored | retired
+  reviewedById: integer("reviewed_by_id"),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  reviewNotes: text("review_notes"),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+  retiredAt: timestamp("retired_at", { withTimezone: true }),
+
+  /* --------------------- latest psychometric snapshot --------------------- */
+  qualityScore: real("quality_score").notNull().default(0),
+  exposureCount: integer("exposure_count").notNull().default(0),
+  successRate: real("success_rate").notNull().default(0),
+  discrimination: real("discrimination").notNull().default(0),
+  /** IRT-ready calibration container (see CalibrationParams). Empty until calibrated. */
+  calibration: jsonb("calibration").$type<Record<string, unknown>>().notNull().default({}),
+  /** Latest quality flags from item analysis (e.g. too_easy, low_discrimination). */
+  qualityFlags: jsonb("quality_flags").$type<string[]>().notNull().default([]),
+  lastAnalyzedAt: timestamp("last_analyzed_at", { withTimezone: true }),
+
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("questions_skill_idx").on(t.skillId)]);
+}, (t) => [
+  index("questions_skill_idx").on(t.skillId),
+  index("questions_status_idx").on(t.status),
+]);
+
+/**
+ * Immutable history of item-analysis / calibration runs. Each analytics pass
+ * appends a snapshot so we can track item drift over time and swap in a full
+ * IRT estimator later without touching the `questions` row shape.
+ */
+export const itemStatistics = pgTable("item_statistics", {
+  id: serial("id").primaryKey(),
+  questionId: integer("question_id").notNull(),
+  sampleSize: integer("sample_size").notNull().default(0),
+  facility: real("facility").notNull().default(0), // proportion correct (p-value)
+  discrimination: real("discrimination").notNull().default(0), // corrected point-biserial
+  discriminationIndex: real("discrimination_index"), // upper-lower 27%
+  meanResponseTimeMs: integer("mean_response_time_ms"),
+  qualityScore: real("quality_score").notNull().default(0),
+  flags: jsonb("flags").$type<string[]>().notNull().default([]),
+  /** Per-option distractor analysis for this window. */
+  distractorAnalysis: jsonb("distractor_analysis").$type<Record<string, unknown>[]>().notNull().default([]),
+  /** IRT/CTT calibration container for this run. */
+  calibration: jsonb("calibration").$type<Record<string, unknown>>().notNull().default({}),
+  windowStart: timestamp("window_start", { withTimezone: true }),
+  windowEnd: timestamp("window_end", { withTimezone: true }),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("item_stats_question_idx").on(t.questionId),
+  index("item_stats_computed_idx").on(t.computedAt),
+]);
 
 /* ------------------------------------------------------------------ */
 /* Assessment / adaptive quiz sessions                                 */
@@ -283,6 +353,7 @@ export type Institution = typeof institutions.$inferSelect;
 export type Skill = typeof skills.$inferSelect;
 export type Subject = typeof subjects.$inferSelect;
 export type Question = typeof questions.$inferSelect;
+export type ItemStatistic = typeof itemStatistics.$inferSelect;
 export type Assessment = typeof assessments.$inferSelect;
 export type AssessmentItem = typeof assessmentItems.$inferSelect;
 export type MasteryState = typeof masteryStates.$inferSelect;

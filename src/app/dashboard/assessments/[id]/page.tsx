@@ -7,6 +7,8 @@ import { requireUser } from "@/lib/auth";
 import { computeNextSessionQuestion } from "@/lib/engine";
 import { getAssessment, listAssessments } from "@/lib/queries";
 import { formatRelative, pct } from "@/lib/utils";
+import { requireStudentPageAccess } from "@/lib/page-guards";
+import { isStudent } from "@/lib/authz";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +17,14 @@ export default async function AssessmentDetailPage({ params }: { params: Promise
   const assessmentId = Number(resolved.id);
   const detail = await getAssessment(assessmentId);
   if (!detail) notFound();
-  if (user.role === "student" && detail.assessment.studentId !== user.id) notFound();
+  // Authorization: self, same-tenant staff, or platform admin (no cross-tenant).
+  await requireStudentPageAccess(user, detail.assessment.studentId);
+  // SECURITY: never ship the answer key for a student's unanswered items.
+  if (isStudent(user)) {
+    detail.items = detail.items.map((item) =>
+      item.studentAnswer === null ? { ...item, correctIndex: -1, explanation: "" } : item,
+    );
+  }
 
   const answered = detail.items.filter((item) => item.studentAnswer !== null);
   const correct = answered.filter((item) => item.isCorrect).length;

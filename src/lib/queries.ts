@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import {
   activityEvents,
@@ -6,6 +7,7 @@ import {
   assessments,
   institutions,
   learningPaths,
+  itemStatistics,
   masteryStates,
   mlModels,
   modelEvaluations,
@@ -49,6 +51,8 @@ export async function getSkillCatalog(): Promise<SkillRow[]> {
 }
 
 export async function getQuestionBank(skillId?: number) {
+  const authors = alias(users, "question_authors");
+  const reviewers = alias(users, "question_reviewers");
   const rows = await db
     .select({
       question: questions,
@@ -56,10 +60,14 @@ export async function getQuestionBank(skillId?: number) {
       subjectName: subjects.name,
       subjectColor: subjects.color,
       difficultyBase: skills.difficultyBase,
+      authorName: authors.name,
+      reviewerName: reviewers.name,
     })
     .from(questions)
     .innerJoin(skills, eq(skills.id, questions.skillId))
     .innerJoin(subjects, eq(subjects.id, skills.subjectId))
+    .leftJoin(authors, eq(authors.id, questions.authorId))
+    .leftJoin(reviewers, eq(reviewers.id, questions.reviewedById))
     .orderBy(desc(questions.createdAt))
     .where(skillId ? eq(questions.skillId, skillId) : undefined);
 
@@ -77,17 +85,73 @@ export async function getQuestionBank(skillId?: number) {
     const stat = statMap.get(row.question.id);
     const total = Number(stat?.total ?? 0);
     const correct = Number(stat?.correct ?? 0);
+    const q = row.question;
     return {
-      ...row.question,
+      ...q,
+      reviewedAt: q.reviewedAt ? q.reviewedAt.toISOString() : null,
+      publishedAt: q.publishedAt ? q.publishedAt.toISOString() : null,
+      retiredAt: q.retiredAt ? q.retiredAt.toISOString() : null,
+      lastAnalyzedAt: q.lastAnalyzedAt ? q.lastAnalyzedAt.toISOString() : null,
+      createdAt: q.createdAt.toISOString(),
       skillName: row.skillName,
       subjectName: row.subjectName,
       subjectColor: row.subjectColor,
       skillDifficultyBase: row.difficultyBase,
+      authorName: row.authorName,
+      reviewerName: row.reviewerName,
       attempts: total,
       correct,
       pCorrect: total ? round(correct / total, 2) : 0,
     };
   });
+}
+
+export type QuestionBankRow = Awaited<ReturnType<typeof getQuestionBank>>[number];
+
+/** Historical item-analysis snapshots for a single question (most recent first). */
+export async function getItemStatistics(questionId: number, limit = 20) {
+  const rows = await db
+    .select()
+    .from(itemStatistics)
+    .where(eq(itemStatistics.questionId, questionId))
+    .orderBy(desc(itemStatistics.computedAt))
+    .limit(limit);
+  return rows.map((row) => ({
+    ...row,
+    windowStart: row.windowStart ? row.windowStart.toISOString() : null,
+    windowEnd: row.windowEnd ? row.windowEnd.toISOString() : null,
+    computedAt: row.computedAt.toISOString(),
+  }));
+}
+
+/** Aggregate quality dashboard for the whole item bank. */
+export async function getQuestionBankAnalytics() {
+  const bank = await getQuestionBank();
+  const byStatus: Record<string, number> = {};
+  const bySource: Record<string, number> = {};
+  const flagCounts: Record<string, number> = {};
+  let analyzed = 0;
+  let qualitySum = 0;
+  let flagged = 0;
+  for (const q of bank) {
+    byStatus[q.status] = (byStatus[q.status] ?? 0) + 1;
+    bySource[q.source] = (bySource[q.source] ?? 0) + 1;
+    if (q.lastAnalyzedAt) {
+      analyzed += 1;
+      qualitySum += q.qualityScore;
+    }
+    for (const f of q.qualityFlags ?? []) flagCounts[f] = (flagCounts[f] ?? 0) + 1;
+    if ((q.qualityFlags ?? []).some((f) => f !== "insufficient_sample")) flagged += 1;
+  }
+  return {
+    total: bank.length,
+    analyzed,
+    meanQuality: analyzed ? round(qualitySum / analyzed, 3) : 0,
+    flagged,
+    byStatus,
+    bySource,
+    flagCounts,
+  };
 }
 
 export type StudentSummary = {
