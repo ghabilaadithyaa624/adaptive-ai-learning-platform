@@ -32,22 +32,30 @@ export const users = pgTable("users", {
   email: text("email").notNull(),
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().default("student"), // student | teacher | trainer | institution | admin
-  institutionId: integer("institution_id"),
+  institutionId: integer("institution_id").references(() => institutions.id, { onDelete: "set null" }),
   gradeLevel: text("grade_level"),
   cohort: text("cohort"),
   avatarColor: text("avatar_color").notNull().default("#4f46e5"),
   goal: text("goal"),
   status: text("status").notNull().default("active"), // active | invited | suspended
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [uniqueIndex("users_email_idx").on(t.email)]);
+}, (t) => [
+  uniqueIndex("users_email_idx").on(t.email),
+  index("users_institution_idx").on(t.institutionId),
+  index("users_role_idx").on(t.role),
+]);
 
 export const sessions = pgTable("sessions", {
   id: serial("id").primaryKey(),
   token: text("token").notNull(),
-  userId: integer("user_id").notNull(),
+  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [uniqueIndex("sessions_token_idx").on(t.token)]);
+}, (t) => [
+  uniqueIndex("sessions_token_idx").on(t.token),
+  index("sessions_user_idx").on(t.userId),
+  index("sessions_expires_idx").on(t.expiresAt),
+]);
 
 /* ------------------------------------------------------------------ */
 /* Skills & question bank                                              */
@@ -62,7 +70,7 @@ export const subjects = pgTable("subjects", {
 
 export const skills = pgTable("skills", {
   id: serial("id").primaryKey(),
-  subjectId: integer("subject_id").notNull(),
+  subjectId: integer("subject_id").references(() => subjects.id, { onDelete: "cascade" }).notNull(),
   name: text("name").notNull(),
   code: text("code").notNull(),
   description: text("description").notNull().default(""),
@@ -74,17 +82,87 @@ export const skills = pgTable("skills", {
 
 export const questions = pgTable("questions", {
   id: serial("id").primaryKey(),
-  skillId: integer("skill_id").notNull(),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "cascade" }).notNull(),
+  /** Optional finer-grained subskill/topic tag within the skill. */
+  subskill: text("subskill"),
+  /** Question-level prerequisite skills (independent of the skill taxonomy edges). */
+  prerequisiteSkillIds: jsonb("prerequisite_skill_ids").$type<number[]>().notNull().default([]),
   stem: text("stem").notNull(),
   options: jsonb("options").$type<string[]>().notNull().default([]),
   correctIndex: integer("correct_index").notNull().default(0),
   difficultyLabel: text("difficulty_label").notNull().default("medium"), // easy | medium | hard | expert
+  /** Numeric difficulty on a 0..1 scale (authored, later refined by calibration). */
+  difficultyValue: real("difficulty_value").notNull().default(0.55),
   bloomLevel: text("bloom_level").notNull().default("apply"),
+  /** Webb's Depth of Knowledge — recall | skill_concept | strategic_thinking | extended_thinking. */
+  cognitiveComplexity: text("cognitive_complexity").notNull().default("skill_concept"),
   explanation: text("explanation").notNull().default(""),
+  /** Progressive hints shown before revealing the answer. */
+  hints: jsonb("hints").$type<string[]>().notNull().default([]),
+  /** Per-distractor pedagogy: which misconception each wrong option targets. */
+  distractorMeta: jsonb("distractor_meta")
+    .$type<{ optionIndex: number; misconception?: string; rationale?: string }[]>()
+    .notNull()
+    .default([]),
   estimatedSeconds: integer("estimated_seconds").notNull().default(60),
+
+  /* --------------------------- authoring / provenance --------------------------- */
+  authorId: integer("author_id").references(() => users.id, { onDelete: "set null" }),
+  source: text("source").notNull().default("human"), // human | ai | imported
+  version: integer("version").notNull().default(1),
+
+  /* ------------------------------- workflow ------------------------------- */
+  status: text("status").notNull().default("draft"), // draft | review | validated | published | monitored | retired
+  reviewedById: integer("reviewed_by_id").references(() => users.id, { onDelete: "set null" }),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  reviewNotes: text("review_notes"),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+  retiredAt: timestamp("retired_at", { withTimezone: true }),
+
+  /* --------------------- latest psychometric snapshot --------------------- */
+  qualityScore: real("quality_score").notNull().default(0),
+  exposureCount: integer("exposure_count").notNull().default(0),
+  successRate: real("success_rate").notNull().default(0),
+  discrimination: real("discrimination").notNull().default(0),
+  /** IRT-ready calibration container (see CalibrationParams). Empty until calibrated. */
+  calibration: jsonb("calibration").$type<Record<string, unknown>>().notNull().default({}),
+  /** Latest quality flags from item analysis (e.g. too_easy, low_discrimination). */
+  qualityFlags: jsonb("quality_flags").$type<string[]>().notNull().default([]),
+  lastAnalyzedAt: timestamp("last_analyzed_at", { withTimezone: true }),
+
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("questions_skill_idx").on(t.skillId)]);
+}, (t) => [
+  index("questions_skill_idx").on(t.skillId),
+  index("questions_status_idx").on(t.status),
+]);
+
+/**
+ * Immutable history of item-analysis / calibration runs. Each analytics pass
+ * appends a snapshot so we can track item drift over time and swap in a full
+ * IRT estimator later without touching the `questions` row shape.
+ */
+export const itemStatistics = pgTable("item_statistics", {
+  id: serial("id").primaryKey(),
+  questionId: integer("question_id").references(() => questions.id, { onDelete: "cascade" }).notNull(),
+  sampleSize: integer("sample_size").notNull().default(0),
+  facility: real("facility").notNull().default(0), // proportion correct (p-value)
+  discrimination: real("discrimination").notNull().default(0), // corrected point-biserial
+  discriminationIndex: real("discrimination_index"), // upper-lower 27%
+  meanResponseTimeMs: integer("mean_response_time_ms"),
+  qualityScore: real("quality_score").notNull().default(0),
+  flags: jsonb("flags").$type<string[]>().notNull().default([]),
+  /** Per-option distractor analysis for this window. */
+  distractorAnalysis: jsonb("distractor_analysis").$type<Record<string, unknown>[]>().notNull().default([]),
+  /** IRT/CTT calibration container for this run. */
+  calibration: jsonb("calibration").$type<Record<string, unknown>>().notNull().default({}),
+  windowStart: timestamp("window_start", { withTimezone: true }),
+  windowEnd: timestamp("window_end", { withTimezone: true }),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("item_stats_question_idx").on(t.questionId),
+  index("item_stats_computed_idx").on(t.computedAt),
+]);
 
 /* ------------------------------------------------------------------ */
 /* Assessment / adaptive quiz sessions                                 */
@@ -92,7 +170,7 @@ export const questions = pgTable("questions", {
 
 export const assessments = pgTable("assessments", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id").notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
   title: text("title").notNull(),
   mode: text("mode").notNull().default("adaptive_quiz"), // diagnostic | adaptive_quiz | practice
   status: text("status").notNull().default("in_progress"), // in_progress | completed | abandoned
@@ -104,13 +182,19 @@ export const assessments = pgTable("assessments", {
   forecastLabel: text("forecast_label"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
-});
+}, (t) => [
+  // Assessments are almost always read by learner (dashboards, history, engine)
+  // and frequently filtered by status. Without these, every studentId lookup
+  // is a Seq Scan (profiled: 1.8–3.4x slower + full-table reads).
+  index("assessments_student_idx").on(t.studentId),
+  index("assessments_student_status_idx").on(t.studentId, t.status),
+]);
 
 export const assessmentItems = pgTable("assessment_items", {
   id: serial("id").primaryKey(),
-  assessmentId: integer("assessment_id").notNull(),
-  questionId: integer("question_id").notNull(),
-  skillId: integer("skill_id").notNull(),
+  assessmentId: integer("assessment_id").references(() => assessments.id, { onDelete: "cascade" }).notNull(),
+  questionId: integer("question_id").references(() => questions.id, { onDelete: "cascade" }).notNull(),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "cascade" }).notNull(),
   sequence: integer("sequence").notNull().default(1),
   studentAnswer: integer("student_answer"),
   isCorrect: boolean("is_correct"),
@@ -120,7 +204,11 @@ export const assessmentItems = pgTable("assessment_items", {
   masteryBefore: real("mastery_before").notNull().default(0.5),
   masteryAfter: real("mastery_after").notNull().default(0.5),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("assessment_items_assessment_idx").on(t.assessmentId)]);
+}, (t) => [
+  index("assessment_items_assessment_idx").on(t.assessmentId),
+  // Item-level analytics and calibration join/aggregate by question.
+  index("assessment_items_question_idx").on(t.questionId),
+]);
 
 /* ------------------------------------------------------------------ */
 /* Knowledge tracing state                                             */
@@ -128,8 +216,8 @@ export const assessmentItems = pgTable("assessment_items", {
 
 export const masteryStates = pgTable("mastery_states", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id").notNull(),
-  skillId: integer("skill_id").notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "cascade" }).notNull(),
   mastery: real("mastery").notNull().default(0.4),
   priorMastery: real("prior_mastery").notNull().default(0.4),
   attempts: integer("attempts").notNull().default(0),
@@ -149,7 +237,7 @@ export const masteryStates = pgTable("mastery_states", {
 
 export const learningPaths = pgTable("learning_paths", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id").notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
   title: text("title").notNull(),
   objective: text("objective").notNull().default(""),
   status: text("status").notNull().default("active"), // draft | active | paused | completed
@@ -158,12 +246,12 @@ export const learningPaths = pgTable("learning_paths", {
   progress: real("progress").notNull().default(0),
   projectedCompletion: text("projected_completion"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [index("learning_paths_student_idx").on(t.studentId)]);
 
 export const pathMilestones = pgTable("path_milestones", {
   id: serial("id").primaryKey(),
-  pathId: integer("path_id").notNull(),
-  skillId: integer("skill_id").notNull(),
+  pathId: integer("path_id").references(() => learningPaths.id, { onDelete: "cascade" }).notNull(),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "cascade" }).notNull(),
   position: integer("position").notNull().default(1),
   status: text("status").notNull().default("available"), // locked | available | in_progress | completed
   targetMastery: real("target_mastery").notNull().default(0.85),
@@ -178,9 +266,9 @@ export const pathMilestones = pgTable("path_milestones", {
 
 export const recommendations = pgTable("recommendations", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id").notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
   kind: text("kind").notNull().default("skill"), // skill | question | path | review
-  skillId: integer("skill_id"),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   reason: text("reason").notNull().default(""),
   priority: real("priority").notNull().default(0.5),
@@ -190,7 +278,11 @@ export const recommendations = pgTable("recommendations", {
   status: text("status").notNull().default("new"), // new | accepted | dismissed | completed
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   actedAt: timestamp("acted_at", { withTimezone: true }),
-}, (t) => [index("recommendations_student_idx").on(t.studentId)]);
+}, (t) => [
+  // Composite serves both the studentId-only lookups (prefix) and the common
+  // `studentId + status` filter used by the recommendation queue.
+  index("recommendations_student_status_idx").on(t.studentId, t.status),
+]);
 
 /* ------------------------------------------------------------------ */
 /* Model registry + activity feed                                      */
@@ -201,27 +293,143 @@ export const mlModels = pgTable("ml_models", {
   name: text("name").notNull(),
   kind: text("kind").notNull().default("classifier"), // classifier | tracer | regressor | recommender
   version: text("version").notNull().default("1.0.0"),
+  // Reproducibility provenance: which data + feature definitions produced this model.
+  datasetVersion: text("dataset_version"), // signature of the training rows (count + span + checksum)
+  featureVersion: text("feature_version"), // version of the feature pipeline
   params: jsonb("params").$type<Record<string, unknown>>().notNull().default({}),
+  hyperparams: jsonb("hyperparams").$type<Record<string, unknown>>().notNull().default({}),
   metrics: jsonb("metrics").$type<Record<string, number>>().notNull().default({}),
   samples: integer("samples").notNull().default(0),
   trainedAt: timestamp("trained_at", { withTimezone: true }).notNull().defaultNow(),
+  evaluatedAt: timestamp("evaluated_at", { withTimezone: true }), // when held-out metrics were computed
 }, (t) => [uniqueIndex("ml_models_name_idx").on(t.name)]);
+
+/**
+ * Immutable evaluation history. Every retrain appends a row so we can compare a
+ * candidate against its predecessors and detect regressions over time — the
+ * `mlModels` row only holds the latest snapshot, this keeps the audit trail.
+ */
+export const modelEvaluations = pgTable("model_evaluations", {
+  id: serial("id").primaryKey(),
+  modelName: text("model_name").notNull(),
+  kind: text("kind").notNull().default("classifier"),
+  version: text("version").notNull(),
+  datasetVersion: text("dataset_version"),
+  featureVersion: text("feature_version"),
+  split: text("split").notNull().default("test"), // test | validation | train
+  metrics: jsonb("metrics").$type<Record<string, number>>().notNull().default({}),
+  detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}), // confusion matrix, reliability bins, comparison
+  hyperparams: jsonb("hyperparams").$type<Record<string, unknown>>().notNull().default({}),
+  samples: integer("samples").notNull().default(0),
+  trainedAt: timestamp("trained_at", { withTimezone: true }).notNull().defaultNow(),
+  evaluatedAt: timestamp("evaluated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("model_eval_name_idx").on(t.modelName),
+  index("model_eval_evaluated_idx").on(t.evaluatedAt),
+]);
+
+/* ------------------------------------------------------------------ */
+/* Security audit log                                                   */
+/* ------------------------------------------------------------------ */
+
+// NOTE: audit_logs intentionally has NO foreign keys on actorId /
+// targetStudentId / institutionId. A security/forensic trail must survive the
+// deletion of the referenced accounts, and identity is preserved via the
+// denormalized actorEmail/actorRole snapshots, so we keep the raw ids rather
+// than cascading or nulling them.
+export const auditLogs = pgTable("audit_logs", {
+  id: serial("id").primaryKey(),
+  actorId: integer("actor_id"),
+  actorRole: text("actor_role"),
+  actorEmail: text("actor_email"),
+  action: text("action").notNull(), // auth.login | auth.register | student.read | user.update | ...
+  resource: text("resource"), // students | users | institutions | assessments | ...
+  resourceId: text("resource_id"),
+  targetStudentId: integer("target_student_id"),
+  institutionId: integer("institution_id"),
+  outcome: text("outcome").notNull().default("success"), // success | denied | failure
+  ip: text("ip"),
+  detail: text("detail"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("audit_actor_idx").on(t.actorId),
+  index("audit_action_idx").on(t.action),
+  index("audit_created_idx").on(t.createdAt),
+]);
+
+/* ------------------------------------------------------------------ */
+/* AI tutor interactions                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Every AI-tutor exchange is recorded as a learning event so its downstream
+ * impact can be evaluated (does tutoring on a skill precede a mastery gain?).
+ *
+ * IMPORTANT ARCHITECTURE INVARIANT: the tutor is a *read-only* consumer of the
+ * learner model. It NEVER writes `mastery_states`, `assessment_items` or
+ * `assessments` — the deterministic engine remains the single source of truth.
+ * This table (plus a lightweight `activity_events` row) is the only persistence
+ * the tutor performs. `masteryAtTime` is a read-only SNAPSHOT captured for later
+ * correlation, not an input the LLM can mutate.
+ */
+export const tutorInteractions = pgTable("tutor_interactions", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  /** Skill the exchange was grounded in (null for skill-agnostic requests). */
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "set null" }),
+  /** Assessment the exchange was tied to, when tutoring happens mid-session. */
+  assessmentId: integer("assessment_id").references(() => assessments.id, { onDelete: "set null" }),
+  /** Assessment item in play, when the request references a specific item. */
+  itemId: integer("item_id").references(() => assessmentItems.id, { onDelete: "set null" }),
+  /** Capability actually served (may differ from the requested one — see policy). */
+  intent: text("intent").notNull(), // explain | hint | socratic | worked_example | diagnose | remediate | next_activity
+  /** The intent the learner asked for, before policy adjustments. */
+  requestedIntent: text("requested_intent"),
+  /** Difficulty register the response was pitched at. */
+  difficulty: text("difficulty").notNull().default("core"), // foundational | core | stretch
+  /** Read-only snapshot of decayed mastery at request time (for later eval). */
+  masteryAtTime: real("mastery_at_time"),
+  /** True when the answer key was deliberately withheld (active assessment). */
+  withheldAnswer: boolean("withheld_answer").notNull().default(false),
+  /** Which generation backend produced the response. */
+  provider: text("provider").notNull().default("deterministic"),
+  model: text("model"),
+  latencyMs: integer("latency_ms").notNull().default(0),
+  responseChars: integer("response_chars").notNull().default(0),
+  /** Post-generation safety findings (e.g. leaked_answer_redacted). */
+  safetyFlags: jsonb("safety_flags").$type<string[]>().notNull().default([]),
+  /** Optional learner feedback for later usefulness analysis. */
+  helpful: boolean("helpful"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("tutor_interactions_student_created_idx").on(t.studentId, t.createdAt.desc()),
+  index("tutor_interactions_skill_idx").on(t.skillId),
+  index("tutor_interactions_assessment_idx").on(t.assessmentId),
+]);
 
 export const activityEvents = pgTable("activity_events", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id"),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }),
   type: text("type").notNull().default("practice"), // practice | assessment | recommendation | path
-  skillId: integer("skill_id"),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "set null" }),
   summary: text("summary").notNull(),
   value: real("value").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  // Activity feeds read `where student_id=? order by created_at desc limit N`.
+  // Without this it was a Seq Scan over the whole feed (profiled: 5.6x slower,
+  // EXPLAIN exec 4.46ms -> 0.08ms at 30k rows).
+  index("activity_student_created_idx").on(t.studentId, t.createdAt.desc()),
+  // Platform-wide feed (no student filter) still orders by recency.
+  index("activity_created_idx").on(t.createdAt.desc()),
+]);
 
 export type User = typeof users.$inferSelect;
 export type Institution = typeof institutions.$inferSelect;
 export type Skill = typeof skills.$inferSelect;
 export type Subject = typeof subjects.$inferSelect;
 export type Question = typeof questions.$inferSelect;
+export type ItemStatistic = typeof itemStatistics.$inferSelect;
 export type Assessment = typeof assessments.$inferSelect;
 export type AssessmentItem = typeof assessmentItems.$inferSelect;
 export type MasteryState = typeof masteryStates.$inferSelect;
@@ -229,4 +437,7 @@ export type LearningPath = typeof learningPaths.$inferSelect;
 export type PathMilestone = typeof pathMilestones.$inferSelect;
 export type Recommendation = typeof recommendations.$inferSelect;
 export type MlModel = typeof mlModels.$inferSelect;
+export type ModelEvaluation = typeof modelEvaluations.$inferSelect;
 export type ActivityEvent = typeof activityEvents.$inferSelect;
+export type AuditLog = typeof auditLogs.$inferSelect;
+export type TutorInteraction = typeof tutorInteractions.$inferSelect;

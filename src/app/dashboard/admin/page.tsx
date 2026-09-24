@@ -2,8 +2,9 @@ import { InstitutionAdmin, UserAdmin } from "@/components/admin-client";
 import { ActionButton } from "@/components/action-button";
 import { Card, CardHeader, EmptyState, StatCard } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
-import { getCohortSnapshot, getInstitutionList, getUserDirectory } from "@/lib/queries";
+import { getCohortSnapshot, getUserDirectory } from "@/lib/queries";
 import { pct } from "@/lib/utils";
+import { institutionScopeId, scopedInstitutions } from "@/lib/page-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,13 @@ export default async function AdminPage() {
     );
   }
 
-  const [users, institutions, snapshot] = await Promise.all([getUserDirectory(), getInstitutionList(), getCohortSnapshot()]);
+  // Institution admins are scoped to their own tenant; platform admins see all.
+  const scopeId = institutionScopeId(user);
+  const [users, institutions, snapshot] = await Promise.all([
+    getUserDirectory(undefined, scopeId),
+    scopedInstitutions(user),
+    getCohortSnapshot(scopeId),
+  ]);
   const canEdit = user.role === "admin";
   const staff = users.filter((entry) => entry.role !== "student");
   const suspended = users.filter((entry) => entry.status === "suspended");

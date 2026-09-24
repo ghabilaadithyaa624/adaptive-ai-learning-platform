@@ -1,33 +1,49 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { recommendations } from "@/db/schema";
-import { fail, ok, toNumber, withUser } from "@/lib/api";
-import { getRecommendations, getStudentMastery, buildSkillSignals, logActivity } from "@/lib/queries";
+import { ok, toNumber, withAuth } from "@/lib/api";
+import { getRecommendations, getStudentMastery, buildSkillSignals, logActivity, getPaths } from "@/lib/queries";
 import { rankSkills, recommendReviewSkill } from "@/lib/ml/recommender";
-import { getPaths } from "@/lib/queries";
 import { round } from "@/lib/utils";
+import { conflict } from "@/lib/http";
+import { readJsonBody } from "@/lib/validation";
+import { accessibleStudentIds, assertStudentAccess, isStudent, resolveWritableStudentId } from "@/lib/authz";
+import { recordAudit } from "@/lib/audit";
+import { events } from "@/lib/observability";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  return withUser(async (user) => {
+  return withAuth(request, async ({ user }) => {
     const url = new URL(request.url);
     const studentIdParam = url.searchParams.get("studentId");
-    const studentId = user.role === "student" ? user.id : studentIdParam ? Number(studentIdParam) : undefined;
     const status = url.searchParams.get("status") ?? undefined;
-    const rows = await getRecommendations({ studentId, status: status === "all" ? undefined : status });
-    return ok({ recommendations: rows });
+    const statusFilter = status === "all" ? undefined : status;
+
+    if (isStudent(user)) {
+      return ok({ recommendations: await getRecommendations({ studentId: user.id, status: statusFilter }) });
+    }
+    if (studentIdParam) {
+      const studentId = Number(studentIdParam);
+      await assertStudentAccess(user, studentId, "recommendations.list");
+      return ok({ recommendations: await getRecommendations({ studentId, status: statusFilter }) });
+    }
+    const ids = await accessibleStudentIds(user);
+    return ok({ recommendations: await getRecommendations({ status: statusFilter, studentIds: ids ?? undefined }) });
   });
 }
 
 export async function POST(request: Request) {
-  return withUser(async (user) => {
-    const body = (await request.json()) as Record<string, unknown>;
-    const studentId = user.role === "student" ? user.id : toNumber(body.studentId, 0);
-    if (!studentId) return fail("Choose a learner to refresh priorities for.");
+  return withAuth(request, async ({ user, ip }) => {
+    const body = await readJsonBody(request);
+    const studentId = await resolveWritableStudentId(
+      user,
+      body.studentId ? toNumber(body.studentId, 0) : undefined,
+      "recommendations.generate",
+    );
 
     const mastery = await getStudentMastery(studentId);
-    if (!mastery.length) return fail("No mastery evidence yet — run a diagnostic first.", 409);
+    if (!mastery.length) throw conflict("No mastery evidence yet — run a diagnostic first.");
 
     const paths = await getPaths(studentId);
     const pathSkillIds = paths.flatMap((path) => path.milestones.map((milestone) => milestone.skillId));
@@ -62,7 +78,10 @@ export async function POST(request: Request) {
         status: "new",
       }));
 
-    if (!values.length) return ok({ recommendations: [], message: "No new priorities — learner is on top of every tracked skill." });
+    if (!values.length) {
+      events.recommendationsGenerated({ studentId, generated: 0 });
+      return ok({ recommendations: [], message: "No new priorities — learner is on top of every tracked skill." });
+    }
     const inserted = await db.insert(recommendations).values(values).returning();
     await logActivity({
       studentId,
@@ -70,6 +89,14 @@ export async function POST(request: Request) {
       summary: `Recommendation engine refreshed ${inserted.length} priorities`,
       value: round(inserted[0]?.priority ?? 0, 2),
     });
+    await recordAudit({
+      actor: user,
+      action: "recommendations.generate",
+      resource: "recommendations",
+      targetStudentId: studentId,
+      ip,
+    });
+    events.recommendationsGenerated({ studentId, generated: inserted.length });
     const rows = await getRecommendations({ studentId });
     return ok({ recommendations: rows, generated: inserted.length }, 201);
   });

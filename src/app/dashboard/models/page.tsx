@@ -5,14 +5,17 @@ import { getModelRegistry, getQuestionBank, getStudentOptions } from "@/lib/quer
 import { db } from "@/db";
 import { assessmentItems } from "@/db/schema";
 import { sql } from "drizzle-orm";
+import { requireStaffPage, institutionScopeId } from "@/lib/page-guards";
 
 export const dynamic = "force-dynamic";
 
 export default async function ModelsPage() {
-  const [, models, learners, questions, sampleRows] = await Promise.all([
-    requireUser(),
+  const user = await requireUser();
+  // Model workbench exposes the question bank + learner picker — staff only.
+  requireStaffPage(user);
+  const [models, learners, questions, sampleRows] = await Promise.all([
     getModelRegistry(),
-    getStudentOptions(),
+    getStudentOptions(institutionScopeId(user)),
     getQuestionBank(),
     db.select({ total: sql<number>`count(*)::int` }).from(assessmentItems),
   ]);

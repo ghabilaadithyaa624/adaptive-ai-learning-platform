@@ -10,11 +10,17 @@ import {
   subjects,
   users,
 } from "@/db/schema";
-import { applyDecay, posterior, predictCorrect } from "@/lib/ml/knowledge-tracing";
+import { DEFAULT_BKT, applyDecay, posterior, predictCorrect } from "@/lib/ml/knowledge-tracing";
 import { labelPrediction, predictProbability, type FeatureSample } from "@/lib/ml/classifier";
-import { selectNextItem, type AdaptiveCandidate } from "@/lib/ml/adaptive";
 import { loadClassifier } from "@/lib/ml/registry";
 import { forecastPerformance } from "@/lib/ml/forecast";
+import { buildLearnerState, type RawResponse, type RawSkillState } from "@/lib/ml/learner-state";
+import { selectNextItemV2 } from "@/lib/ml/selection";
+import { LogisticResponseModel } from "@/lib/ml/models/logistic";
+import { bktModel } from "@/lib/ml/models/bkt";
+import { events, now } from "@/lib/observability";
+import type { CandidateItem } from "@/lib/ml/interfaces";
+import { SERVABLE_STATUSES } from "@/lib/questions/constants";
 import { MASTERY_TARGET, clamp, mean, round } from "@/lib/utils";
 
 export const DIFFICULTY_VALUE: Record<string, number> = { easy: 0.3, medium: 0.55, hard: 0.75, expert: 0.9 };
@@ -83,6 +89,7 @@ function buildSample(params: {
 
 /** Choose (and persist) the next adaptive item for an in-progress assessment. */
 export async function computeNextSessionQuestion(assessmentId: number): Promise<SessionQuestion | null> {
+  const selectionStart = now();
   const assessmentRows = await db.select().from(assessments).where(eq(assessments.id, assessmentId)).limit(1);
   const assessment = assessmentRows[0];
   if (!assessment || assessment.status !== "in_progress") return null;
@@ -102,7 +109,7 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     : (await db.select({ id: skills.id }).from(skills).limit(4)).map((row) => row.id);
 
   const model = await loadClassifier();
-  const [states, candidateRows] = await Promise.all([
+  const [states, candidateRows, skillRows, recentItemRows] = await Promise.all([
     db.select().from(masteryStates).where(eq(masteryStates.studentId, assessment.studentId)),
     db
       .select({
@@ -115,12 +122,51 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
       .from(questions)
       .innerJoin(skills, eq(skills.id, questions.skillId))
       .innerJoin(subjects, eq(subjects.id, skills.subjectId))
-      .where(and(inArray(questions.skillId, targetSkillIds), eq(questions.isActive, true))),
+      // Only published/monitored items are delivered to learners — draft, in-review,
+      // validated-but-unpublished and retired items are never served.
+      .where(
+        and(
+          inArray(questions.skillId, targetSkillIds),
+          eq(questions.isActive, true),
+          inArray(questions.status, SERVABLE_STATUSES),
+        ),
+      ),
+    // Full skill graph (small taxonomy) so prerequisite gating works even for
+    // skills the learner has not attempted yet.
+    db
+      .select({ skill: skills, subjectName: subjects.name })
+      .from(skills)
+      .innerJoin(subjects, eq(subjects.id, skills.subjectId)),
+    // Recent answered responses power recency, response-time and error signals.
+    db
+      .select({
+        skillId: assessmentItems.skillId,
+        isCorrect: assessmentItems.isCorrect,
+        responseTimeMs: assessmentItems.responseTimeMs,
+        estimatedSeconds: questions.estimatedSeconds,
+        difficultyLabel: questions.difficultyLabel,
+        bloomLevel: questions.bloomLevel,
+        createdAt: assessmentItems.createdAt,
+      })
+      .from(assessmentItems)
+      .innerJoin(assessments, eq(assessments.id, assessmentItems.assessmentId))
+      .innerJoin(questions, eq(questions.id, assessmentItems.questionId))
+      .where(eq(assessments.studentId, assessment.studentId))
+      .orderBy(assessmentItems.createdAt)
+      .limit(120),
   ]);
+
+  // The full mastery state set for this student is already loaded above; derive
+  // the per-skill decayed mastery from it instead of issuing extra queries
+  // (`loadSkillFeatures` re-queries mastery_states + a question count) on this
+  // hot, per-question-served path.
+  const masteryForSkill = (skillId: number) => {
+    const st = states.find((row) => row.skillId === skillId);
+    return st ? applyDecay(st.mastery, st.lastPracticedAt) : 0;
+  };
 
   if (pending) {
     const questionRow = candidateRows.find((row) => row.question.id === pending.questionId);
-    const skill = await loadSkillFeatures(assessment.studentId, pending.skillId);
     return {
       itemId: pending.id,
       questionId: pending.questionId,
@@ -135,63 +181,105 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
       bloomLevel: questionRow?.question.bloomLevel ?? "apply",
       estimatedSeconds: questionRow?.question.estimatedSeconds ?? 60,
       predictedSuccess: pending.predictedCorrectProb,
-      mastery: round(skill.mastery, 3),
+      mastery: round(masteryForSkill(pending.skillId), 3),
       label: labelPrediction(pending.predictedCorrectProb),
       rationale: "Resuming the item already queued for this session.",
       informationGain: round(pending.predictedCorrectProb * (1 - pending.predictedCorrectProb) * 4, 2),
     };
   }
 
-  const ability = states.length ? mean(states.map((row) => applyDecay(row.mastery, row.lastPracticedAt))) : 0.45;
-  const skillPriorities = new Map<number, number>();
-  const askedCounts = new Map<number, number>();
-  for (const item of answered) {
-    askedCounts.set(item.skillId, (askedCounts.get(item.skillId) ?? 0) + 1);
-  }
+  // ---- Build the rich composite learner state (v2 adaptive engine) ----
+  const stateBySkill = new Map(states.map((row) => [row.skillId, row]));
+  const rawSkillStates: RawSkillState[] = skillRows.map((row) => {
+    const state = stateBySkill.get(row.skill.id);
+    return {
+      skillId: row.skill.id,
+      skillName: row.skill.name,
+      subjectName: row.subjectName,
+      mastery: state ? state.mastery : 0.2,
+      attempts: state?.attempts ?? 0,
+      correct: state?.correct ?? 0,
+      streak: state?.streak ?? 0,
+      history: state?.history ?? [],
+      lastPracticedAt: state?.lastPracticedAt ?? null,
+      prereqIds: row.skill.prereqIds ?? [],
+      difficultyBase: row.skill.difficultyBase,
+      pathAlignment: assessment.targetSkillIds?.includes(row.skill.id) ? 0.8 : 0.3,
+    };
+  });
 
-  for (const skillId of targetSkillIds) {
-    const state = states.find((row) => row.skillId === skillId);
-    const mastery = state ? applyDecay(state.mastery, state.lastPracticedAt) : 0;
-    const attempts = state?.attempts ?? 0;
-    const gap = 1 - mastery;
-    const evidence = clamp(attempts / 12);
-    const staleness = state?.lastPracticedAt
-      ? clamp((Date.now() - state.lastPracticedAt.getTime()) / (86_400_000 * 30))
-      : 1;
-    skillPriorities.set(skillId, clamp(gap * (0.55 + 0.45 * evidence) * 0.8 + staleness * 0.2, 0, 1));
-  }
+  const recentResponses: RawResponse[] = recentItemRows
+    .filter((row) => row.isCorrect !== null)
+    .map((row) => ({
+      skillId: row.skillId,
+      isCorrect: Boolean(row.isCorrect),
+      responseTimeMs: row.responseTimeMs,
+      estimatedSeconds: row.estimatedSeconds,
+      difficulty: DIFFICULTY_VALUE[row.difficultyLabel] ?? 0.55,
+      bloom: BLOOM_VALUE[row.bloomLevel] ?? 3,
+      createdAt: row.createdAt,
+    }));
 
-  const candidates: AdaptiveCandidate[] = candidateRows.map((row) => ({
+  const sessionCorrect = answered.filter((item) => item.isCorrect).length;
+  const learnerState = buildLearnerState({
+    studentId: assessment.studentId,
+    skillStates: rawSkillStates,
+    responses: recentResponses,
+    context: {
+      mode: assessment.mode,
+      itemsAnswered: answered.length,
+      itemTarget: assessment.itemTarget,
+      sessionAccuracy: answered.length ? sessionCorrect / answered.length : undefined,
+    },
+  });
+
+  const candidates: CandidateItem[] = candidateRows.map((row) => ({
     questionId: row.question.id,
     skillId: row.question.skillId,
     skillName: row.skillName,
-    difficultyBase: DIFFICULTY_VALUE[row.question.difficultyLabel] ?? row.skillDifficulty ?? 0.55,
-    bloom: BLOOM_VALUE[row.question.bloomLevel] ?? 3,
+    subjectName: row.subjectName,
+    item: {
+      difficulty: DIFFICULTY_VALUE[row.question.difficultyLabel] ?? row.skillDifficulty ?? 0.55,
+      bloom: BLOOM_VALUE[row.question.bloomLevel] ?? 3,
+      expectedTimeMs: row.question.estimatedSeconds * 1000,
+    },
     estimatedSeconds: row.question.estimatedSeconds,
     text: row.question.stem,
   }));
 
-  const seen = new Set(answered.map((item) => item.questionId));
-  const chosen = selectNextItem({
+  const askedSkillCounts = new Map<number, number>();
+  const askedBloomCounts = new Map<number, number>();
+  for (const item of answered) {
+    askedSkillCounts.set(item.skillId, (askedSkillCounts.get(item.skillId) ?? 0) + 1);
+    const q = candidateRows.find((row) => row.question.id === item.questionId);
+    const bloom = q ? BLOOM_VALUE[q.question.bloomLevel] ?? 3 : 3;
+    askedBloomCounts.set(bloom, (askedBloomCounts.get(bloom) ?? 0) + 1);
+  }
+
+  const { chosen } = selectNextItemV2({
+    learner: learnerState,
     candidates,
-    skillPriorities,
-    askedCounts,
-    model,
-    ability,
-    baseSample: {
-      ability,
-      masteryBefore: 0.5,
-      skillAccuracy: 0.5,
-      evidence: 0.4,
-      responseTimeMs: 30_000,
-    },
-    seen,
+    seenQuestionIds: new Set(answered.map((item) => item.questionId)),
+    askedSkillCounts,
+    askedBloomCounts,
+    responseModel: new LogisticResponseModel(model),
+    knowledgeModel: bktModel,
+    target: MASTERY_TARGET,
   });
 
-  if (!chosen) return null;
+  if (!chosen) {
+    events.selectionExhausted({
+      assessmentId,
+      studentId: assessment.studentId,
+      durationMs: Math.round(now() - selectionStart),
+    });
+    return null;
+  }
+  // One batched scoring pass over the candidate pool feeds the selection.
+  events.modelPrediction({ model: "difficulty-classifier", surface: "selection", count: candidates.length });
 
   const questionRow = candidateRows.find((row) => row.question.id === chosen.candidate.questionId);
-  const skill = await loadSkillFeatures(assessment.studentId, chosen.candidate.skillId);
+  const chosenMastery = masteryForSkill(chosen.candidate.skillId);
   const [item] = await db
     .insert(assessmentItems)
     .values({
@@ -199,13 +287,25 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
       questionId: chosen.candidate.questionId,
       skillId: chosen.candidate.skillId,
       sequence: answered.length + 1,
-      predictedCorrectProb: round(chosen.probability, 3),
-      assignedDifficulty: round(chosen.candidate.difficultyBase, 3),
-      masteryBefore: round(skill.mastery, 3),
-      masteryAfter: round(skill.mastery, 3),
+      predictedCorrectProb: round(chosen.predictedCorrect, 3),
+      assignedDifficulty: round(chosen.candidate.item.difficulty, 3),
+      masteryBefore: round(chosenMastery, 3),
+      masteryAfter: round(chosenMastery, 3),
       responseTimeMs: 0,
     })
     .returning();
+
+  events.questionSelected({
+    assessmentId,
+    studentId: assessment.studentId,
+    itemId: item.id,
+    questionId: chosen.candidate.questionId,
+    skillId: chosen.candidate.skillId,
+    sequence: item.sequence,
+    predictedSuccess: round(chosen.predictedCorrect, 3),
+    informationGain: round(chosen.information, 2),
+    durationMs: Math.round(now() - selectionStart),
+  });
 
   return {
     itemId: item.id,
@@ -220,10 +320,10 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     difficultyLabel: questionRow?.question.difficultyLabel ?? "medium",
     bloomLevel: questionRow?.question.bloomLevel ?? "apply",
     estimatedSeconds: questionRow?.question.estimatedSeconds ?? 60,
-    predictedSuccess: round(chosen.probability, 3),
-    mastery: round(skill.mastery, 3),
-    label: labelPrediction(chosen.probability),
-    rationale: chosen.rationale,
+    predictedSuccess: round(chosen.predictedCorrect, 3),
+    mastery: round(chosenMastery, 3),
+    label: labelPrediction(chosen.predictedCorrect),
+    rationale: chosen.explanation,
     informationGain: round(chosen.information, 2),
   };
 }
@@ -293,10 +393,47 @@ export async function gradeItem(params: {
     }),
   );
 
+  events.modelPrediction({
+    model: "difficulty-classifier",
+    surface: "grading",
+    studentId: assessment.studentId,
+    questionId: row.question.id,
+    probability: round(predicted, 3),
+  });
+
   const isCorrect = params.studentAnswer !== null && params.studentAnswer === row.question.correctIndex;
   const masteryBefore = skill.mastery;
-  const masteryAfter = posterior(masteryBefore, isCorrect);
+  // Use the per-skill BKT parameters persisted on the mastery state when
+  // available (previously ignored) so tracing adapts to how slippery/guessable
+  // each skill is; fall back to the population defaults otherwise.
+  const bktParams = skill.state
+    ? {
+        slip: skill.state.slip ?? DEFAULT_BKT.slip,
+        guess: skill.state.guess ?? DEFAULT_BKT.guess,
+        learn: skill.state.learnRate ?? DEFAULT_BKT.learn,
+        forget: DEFAULT_BKT.forget,
+      }
+    : DEFAULT_BKT;
+  const masteryAfter = posterior(masteryBefore, isCorrect, bktParams);
   const nowDate = new Date();
+
+  events.answerSubmitted({
+    assessmentId: params.assessmentId,
+    studentId: assessment.studentId,
+    itemId: row.item.id,
+    questionId: row.question.id,
+    skillId: row.item.skillId,
+    isCorrect,
+    responseTimeMs: params.responseTimeMs,
+    predictedSuccess: round(predicted, 3),
+  });
+  events.masteryUpdated({
+    studentId: assessment.studentId,
+    skillId: row.item.skillId,
+    masteryBefore: round(masteryBefore, 3),
+    masteryAfter: round(masteryAfter, 3),
+    delta: round(masteryAfter - masteryBefore, 3),
+  });
 
   await db
     .update(assessmentItems)
@@ -397,6 +534,15 @@ export async function gradeItem(params: {
       value: score,
     });
 
+    events.assessmentCompleted({
+      assessmentId: params.assessmentId,
+      studentId: assessment.studentId,
+      mode: assessment.mode,
+      outcome: "completed",
+      score,
+      items: answeredItems.length,
+    });
+
     summary = {
       score,
       correct: correctCount,
@@ -452,6 +598,12 @@ export async function startAssessment(params: {
     type: "assessment",
     summary: `Started ${params.title} (${params.itemTarget} adaptive items)`,
     value: 0,
+  });
+  events.assessmentStarted({
+    assessmentId: row.id,
+    studentId: params.studentId,
+    mode: params.mode,
+    itemTarget: params.itemTarget,
   });
   return row;
 }

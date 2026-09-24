@@ -3,7 +3,9 @@ import { LearnerFilter } from "@/components/learner-filter";
 import { RecommendationQueue } from "@/components/recommendation-queue";
 import { Card, CardHeader, EmptyState, StatCard, Badge } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
-import { getStudentDetail, getRecommendations, listStudents } from "@/lib/queries";
+import { getStudentDetail, getRecommendations } from "@/lib/queries";
+import { resolveFocusStudent, scopedLearners } from "@/lib/page-guards";
+import { accessibleStudentIds } from "@/lib/authz";
 import { pct } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -11,8 +13,12 @@ export const dynamic = "force-dynamic";
 export default async function RecommendationsPage({ searchParams }: { searchParams: Promise<{ studentId?: string }> }) {
   const [user, params] = await Promise.all([requireUser(), searchParams]);
   const requested = params.studentId ? Number(params.studentId) : undefined;
-  const scoped = user.role === "student" ? user.id : requested;
-  const [items, learners] = await Promise.all([getRecommendations({ studentId: scoped }), listStudents()]);
+  const scoped = await resolveFocusStudent(user, requested);
+  const scopeIds = await accessibleStudentIds(user);
+  const [items, learners] = await Promise.all([
+    getRecommendations(scoped ? { studentId: scoped } : { studentIds: scopeIds ?? undefined }),
+    scopedLearners(user),
+  ]);
   const detail = scoped ? await getStudentDetail(scoped) : null;
 
   const open = items.filter((item) => item.status === "new");

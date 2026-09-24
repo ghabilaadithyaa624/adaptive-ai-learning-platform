@@ -18,13 +18,53 @@ type Prediction = {
   recommendation: string;
 };
 
-type Calibration = {
+type EvaluationReport = {
   samples: number;
-  observedAccuracy: number;
-  meanPredicted: number;
-  calibrationGap: number;
-  truePositives: number;
+  message?: string;
+  metrics?: {
+    accuracy: number;
+    precision: number;
+    recall: number;
+    f1: number;
+    specificity: number;
+    rocAuc: number | null;
+    rocAucApplicable: boolean;
+    prAuc: number | null;
+    prAucApplicable: boolean;
+    logLoss: number;
+    brier: number;
+    calibrationError: number;
+    maxCalibrationError: number;
+    baseRate: number;
+  };
+  confusion?: { truePositive: number; falsePositive: number; trueNegative: number; falseNegative: number };
+  reliability?: { lower: number; upper: number; count: number; meanConfidence: number; observedAccuracy: number }[];
+  recentHoldout?: {
+    samples: number;
+    accuracy: number;
+    rocAuc: number | null;
+    logLoss: number;
+    calibrationError: number;
+  } | null;
   error?: string;
+};
+
+type MetricComparison = {
+  metric: string;
+  baseline: number | null;
+  candidate: number | null;
+  delta: number | null;
+  verdict: "improved" | "regressed" | "unchanged" | "incomparable";
+};
+
+type ComparisonResult = {
+  verdict: string;
+  promote: boolean;
+  reasons: string[];
+  improvements: string[];
+  regressions: string[];
+  regressionAlerts: { metric: string; delta: number | null }[];
+  metrics: MetricComparison[];
 };
 
 export function ModelsWorkbench({
@@ -42,7 +82,8 @@ export function ModelsWorkbench({
   const [models, setModels] = useState(initialModels);
   const [training, setTraining] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
-  const [calibration, setCalibration] = useState<Calibration | null>(null);
+  const [evaluation, setEvaluation] = useState<EvaluationReport | null>(null);
+  const [comparison, setComparison] = useState<ComparisonResult | null>(null);
   const [predicting, setPredicting] = useState(false);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [form, setForm] = useState({
@@ -60,12 +101,19 @@ export function ModelsWorkbench({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "train" }),
       });
-      const payload = (await response.json()) as { models?: ModelView[]; model?: { metrics: Record<string, number>; samples: number }; error?: string };
+      const payload = (await response.json()) as {
+        models?: ModelView[];
+        model?: { metrics: Record<string, number>; samples: number; heldOutSamples?: number };
+        comparison?: ComparisonResult;
+        error?: string;
+      };
       if (!response.ok || !payload.models) throw new Error(payload.error ?? "Training failed");
       setModels(payload.models);
+      if (payload.comparison) setComparison(payload.comparison);
+      const verdict = payload.comparison?.verdict ?? "recorded";
       toast.success(
         "Classifier retrained",
-        `${payload.model?.samples ?? 0} responses · accuracy ${pct(payload.model?.metrics.accuracy ?? 0)} · AUC ${(payload.model?.metrics.auc ?? 0).toFixed(3)}`,
+        `${payload.model?.heldOutSamples ?? 0} held-out · AUC ${(payload.model?.metrics.auc ?? 0).toFixed(3)} · verdict: ${verdict}`,
       );
     } catch (caught) {
       toast.error("Training failed", caught instanceof Error ? caught.message : undefined);
@@ -82,10 +130,17 @@ export function ModelsWorkbench({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "evaluate" }),
       });
-      const payload = (await response.json()) as Calibration;
+      const payload = (await response.json()) as EvaluationReport;
       if (!response.ok || payload.error) throw new Error(payload.error ?? "Evaluation failed");
-      setCalibration(payload);
-      toast.info("Calibration computed", `observed ${pct(payload.observedAccuracy)} vs predicted ${pct(payload.meanPredicted)}`);
+      setEvaluation(payload);
+      if (payload.metrics) {
+        toast.info(
+          "Held-out evaluation computed",
+          `${payload.samples} responses · ROC-AUC ${payload.metrics.rocAuc?.toFixed(3) ?? "n/a"} · ECE ${payload.metrics.calibrationError.toFixed(3)}`,
+        );
+      } else {
+        toast.info("Evaluation", payload.message ?? "No labelled data yet");
+      }
     } catch (caught) {
       toast.error("Evaluation failed", caught instanceof Error ? caught.message : undefined);
     } finally {
@@ -130,23 +185,23 @@ export function ModelsWorkbench({
           <p className="mt-1 text-xs text-slate-500">{trainingSamples} logged responses available for training</p>
         </Card>
         <Card>
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Classifier accuracy</p>
-          <p className="mt-2 text-2xl font-semibold text-slate-900">{classifier ? pct(classifier.metrics.accuracy ?? 0) : "—"}</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">ROC-AUC (held-out)</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-900">{(classifier?.metrics.auc ?? 0).toFixed(3)}</p>
           <p className="mt-1 text-xs text-slate-500">
-            AUC {(classifier?.metrics.auc ?? 0).toFixed(3)} · logloss {(classifier?.metrics.logLoss ?? 0).toFixed(3)}
+            PR-AUC {(classifier?.metrics.prAuc ?? 0).toFixed(3)} · F1 {(classifier?.metrics.f1 ?? 0).toFixed(3)}
           </p>
         </Card>
         <Card>
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Brier score</p>
-          <p className="mt-2 text-2xl font-semibold text-slate-900">{(classifier?.metrics.brier ?? 0).toFixed(3)}</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Calibration (ECE)</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-900">{(classifier?.metrics.ece ?? 0).toFixed(3)}</p>
           <p className="mt-1 text-xs text-slate-500">
-            precision {pct(classifier?.metrics.precision ?? 0)} · recall {pct(classifier?.metrics.recall ?? 0)}
+            Brier {(classifier?.metrics.brier ?? 0).toFixed(3)} · logloss {(classifier?.metrics.logLoss ?? 0).toFixed(3)}
           </p>
         </Card>
         <Card>
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Held-out test set</p>
           <p className="mt-2 text-2xl font-semibold text-slate-900">{classifier?.metrics.testSize ?? 0}</p>
-          <p className="mt-1 text-xs text-slate-500">samples reserved by the deterministic 80/20 split</p>
+          <p className="mt-1 text-xs text-slate-500">most-recent samples from the chronological (no-leakage) split</p>
         </Card>
       </div>
 
@@ -162,7 +217,7 @@ export function ModelsWorkbench({
                   {training ? "Training…" : "Retrain classifier"}
                 </button>
                 <button className={buttonClass("secondary", "sm")} onClick={evaluate} disabled={evaluating}>
-                  {evaluating ? "Evaluating…" : "Evaluate calibration"}
+                  {evaluating ? "Evaluating…" : "Evaluate held-out"}
                 </button>
               </div>
             }
@@ -176,6 +231,13 @@ export function ModelsWorkbench({
                     <p className="text-[11px] text-slate-500">
                       {model.kind} · {model.version} · trained {new Date(model.trainedAt).toLocaleString()}
                     </p>
+                    {(model.datasetVersion || model.featureVersion) ? (
+                      <p className="mt-0.5 text-[10px] text-slate-400">
+                        {model.featureVersion ? `feature ${model.featureVersion}` : null}
+                        {model.datasetVersion ? ` · dataset ${model.datasetVersion}` : null}
+                        {model.evaluatedAt ? ` · evaluated ${new Date(model.evaluatedAt).toLocaleDateString()}` : null}
+                      </p>
+                    ) : null}
                   </div>
                   <Badge tone="violet">{model.samples} samples</Badge>
                 </div>
@@ -191,31 +253,128 @@ export function ModelsWorkbench({
             {!models.length ? <EmptyState icon="⚙" title="No models registered" description="Run a retraining job to persist the first classifier snapshot." /> : null}
           </ul>
 
-          {calibration ? (
-            <div className="mt-4 rounded-xl border border-slate-200 p-3">
-              <p className="text-xs font-semibold text-slate-800">Calibration report</p>
-              <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                <div>
-                  <div className="flex justify-between text-[11px] text-slate-500">
-                    <span>predicted {pct(calibration.meanPredicted)}</span>
-                    <span>observed {pct(calibration.observedAccuracy)}</span>
-                  </div>
-                  <ProgressBar value={calibration.meanPredicted} tone="indigo" className="mt-1" />
-                  <ProgressBar value={calibration.observedAccuracy} tone="emerald" className="mt-1" />
-                </div>
-                <div className="text-[11px] text-slate-600">
-                  <p>{calibration.samples} graded responses</p>
-                  <p>{calibration.truePositives} correct outcomes</p>
-                  <p>
-                    Calibration gap:{" "}
-                    <span className={Math.abs(calibration.calibrationGap) < 0.05 ? "text-emerald-600" : "text-amber-600"}>
-                      {calibration.calibrationGap >= 0 ? "+" : ""}
-                      {(calibration.calibrationGap * 100).toFixed(1)} pts
-                    </span>
-                  </p>
-                </div>
+          {comparison ? (
+            <div
+              className={`mt-4 rounded-xl border p-3 ${
+                comparison.regressions.length || comparison.regressionAlerts.length
+                  ? "border-rose-200 bg-rose-50/60"
+                  : comparison.promote
+                    ? "border-emerald-200 bg-emerald-50/60"
+                    : "border-slate-200 bg-slate-50/60"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-slate-800">Retrain verdict vs. previous model</p>
+                <Badge
+                  tone={
+                    comparison.regressionAlerts.length ? "rose" : comparison.verdict === "improved" ? "emerald" : "slate"
+                  }
+                >
+                  {comparison.verdict}
+                </Badge>
               </div>
+              <ul className="mt-2 space-y-1 text-[11px] text-slate-600">
+                {comparison.reasons.map((reason, index) => (
+                  <li key={index}>• {reason}</li>
+                ))}
+              </ul>
+              {comparison.metrics.length ? (
+                <div className="mt-2 grid gap-1 text-[11px] sm:grid-cols-2">
+                  {comparison.metrics
+                    .filter((metric) => metric.verdict !== "incomparable")
+                    .map((metric) => (
+                      <span key={metric.metric} className="flex justify-between gap-2">
+                        <span className="text-slate-500">{metric.metric}</span>
+                        <span
+                          className={
+                            metric.verdict === "improved"
+                              ? "font-semibold text-emerald-600"
+                              : metric.verdict === "regressed"
+                                ? "font-semibold text-rose-600"
+                                : "text-slate-500"
+                          }
+                        >
+                          {metric.delta === null ? "n/a" : `${metric.delta >= 0 ? "+" : ""}${metric.delta.toFixed(4)}`}
+                        </span>
+                      </span>
+                    ))}
+                </div>
+              ) : null}
             </div>
+          ) : null}
+
+          {evaluation?.metrics ? (
+            <div className="mt-4 rounded-xl border border-slate-200 p-3">
+              <p className="text-xs font-semibold text-slate-800">Held-out evaluation report</p>
+              <p className="text-[10px] text-slate-400">{evaluation.samples} labelled serving predictions</p>
+              <div className="mt-2 grid gap-1 text-[11px] text-slate-600 sm:grid-cols-3">
+                <span>accuracy: <b className="text-slate-700">{evaluation.metrics.accuracy.toFixed(3)}</b></span>
+                <span>precision: <b className="text-slate-700">{evaluation.metrics.precision.toFixed(3)}</b></span>
+                <span>recall: <b className="text-slate-700">{evaluation.metrics.recall.toFixed(3)}</b></span>
+                <span>F1: <b className="text-slate-700">{evaluation.metrics.f1.toFixed(3)}</b></span>
+                <span>
+                  ROC-AUC: <b className="text-slate-700">{evaluation.metrics.rocAuc?.toFixed(3) ?? "n/a"}</b>
+                </span>
+                <span>
+                  PR-AUC: <b className="text-slate-700">{evaluation.metrics.prAuc?.toFixed(3) ?? "n/a"}</b>
+                </span>
+                <span>log loss: <b className="text-slate-700">{evaluation.metrics.logLoss.toFixed(3)}</b></span>
+                <span>Brier: <b className="text-slate-700">{evaluation.metrics.brier.toFixed(3)}</b></span>
+                <span>ECE: <b className="text-slate-700">{evaluation.metrics.calibrationError.toFixed(3)}</b></span>
+              </div>
+
+              {evaluation.confusion ? (
+                <div className="mt-3">
+                  <p className="text-[11px] font-semibold text-slate-700">Confusion matrix</p>
+                  <div className="mt-1 grid w-full max-w-xs grid-cols-3 gap-px overflow-hidden rounded-lg bg-slate-200 text-center text-[10px]">
+                    <div className="bg-slate-50 p-1 font-medium text-slate-400"> </div>
+                    <div className="bg-slate-50 p-1 font-medium text-slate-500">pred +</div>
+                    <div className="bg-slate-50 p-1 font-medium text-slate-500">pred −</div>
+                    <div className="bg-slate-50 p-1 font-medium text-slate-500">actual +</div>
+                    <div className="bg-emerald-50 p-2 font-semibold text-emerald-700">{evaluation.confusion.truePositive}</div>
+                    <div className="bg-rose-50 p-2 font-semibold text-rose-700">{evaluation.confusion.falseNegative}</div>
+                    <div className="bg-slate-50 p-1 font-medium text-slate-500">actual −</div>
+                    <div className="bg-rose-50 p-2 font-semibold text-rose-700">{evaluation.confusion.falsePositive}</div>
+                    <div className="bg-emerald-50 p-2 font-semibold text-emerald-700">{evaluation.confusion.trueNegative}</div>
+                  </div>
+                </div>
+              ) : null}
+
+              {evaluation.reliability?.length ? (
+                <div className="mt-3">
+                  <p className="text-[11px] font-semibold text-slate-700">Reliability (confidence vs. observed)</p>
+                  <div className="mt-1 space-y-1">
+                    {evaluation.reliability.map((bin) => (
+                      <div key={bin.lower} className="flex items-center gap-2 text-[10px] text-slate-500">
+                        <span className="w-16 tabular-nums">
+                          {bin.lower.toFixed(1)}–{bin.upper.toFixed(1)}
+                        </span>
+                        <div className="flex-1">
+                          <ProgressBar value={bin.meanConfidence} tone="indigo" />
+                          <ProgressBar value={bin.observedAccuracy} tone="emerald" className="mt-0.5" />
+                        </div>
+                        <span className="w-8 text-right tabular-nums">n{bin.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-1 text-[10px] text-slate-400">Indigo = mean predicted confidence · Green = observed accuracy</p>
+                </div>
+              ) : null}
+
+              {evaluation.recentHoldout ? (
+                <p className="mt-3 text-[11px] text-slate-600">
+                  Most-recent {evaluation.recentHoldout.samples} predictions (temporal holdout): ROC-AUC{" "}
+                  <b className="text-slate-700">{evaluation.recentHoldout.rocAuc?.toFixed(3) ?? "n/a"}</b> · ECE{" "}
+                  <b className="text-slate-700">{evaluation.recentHoldout.calibrationError.toFixed(3)}</b>
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {evaluation && !evaluation.metrics ? (
+            <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] text-slate-500">
+              {evaluation.message ?? "No labelled responses to evaluate yet."}
+            </p>
           ) : null}
         </Card>
 

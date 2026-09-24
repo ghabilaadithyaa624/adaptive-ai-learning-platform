@@ -3,22 +3,24 @@ import { BarList, ForecastChart, RadialGauge, Sparkline } from "@/components/cha
 import { LearnerFilter } from "@/components/learner-filter";
 import { Badge, buttonClass, Card, CardHeader, EmptyState, ProgressBar, StatCard } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
-import { getActivity, getCohortSnapshot, getStudentDetail, listStudents } from "@/lib/queries";
+import { getActivity, getCohortSnapshot, getStudentDetail } from "@/lib/queries";
+import { institutionScopeId, resolveFocusStudent, scopedLearners } from "@/lib/page-guards";
+import { accessibleStudentIds, isStudent } from "@/lib/authz";
 import { MASTERY_TARGET, formatRelative, pct } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
 export default async function AnalyticsPage({ searchParams }: { searchParams: Promise<{ studentId?: string }> }) {
-  const [user, params, snapshot, learners, activity] = await Promise.all([
-    requireUser(),
-    searchParams,
-    getCohortSnapshot(),
-    listStudents(),
-    getActivity(undefined, 12),
-  ]);
+  const [user, params] = await Promise.all([requireUser(), searchParams]);
   const requested = params.studentId ? Number(params.studentId) : undefined;
-  const scoped = user.role === "student" ? user.id : requested;
-  const detail = scoped ? await getStudentDetail(scoped) : null;
+  const scoped = await resolveFocusStudent(user, requested);
+  const scopeIds = await accessibleStudentIds(user);
+  const [snapshot, learners, activity, detail] = await Promise.all([
+    getCohortSnapshot(institutionScopeId(user)),
+    scopedLearners(user),
+    isStudent(user) ? getActivity(user.id, 12) : getActivity(undefined, 12, scopeIds ?? undefined),
+    scoped ? getStudentDetail(scoped) : Promise.resolve(null),
+  ]);
   const forecast = detail?.performance.forecast ?? null;
 
   return (

@@ -93,7 +93,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           <p className="mt-1 text-xs text-slate-500">
             {mode === "login"
               ? "Adaptive assessments, knowledge tracing and personalised paths for every learner."
-              : "Pick your role — learners get a diagnostic, educators get cohort analytics."}
+              : "Create your learner account to get a personalised diagnostic and mastery plan."}
           </p>
         </div>
 
@@ -122,24 +122,18 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
             className={inputClass}
             value={form.password}
             onChange={(event) => update("password", event.target.value)}
-            placeholder="At least 6 characters"
+            placeholder="At least 8 characters, with a letter and a number"
             required
           />
         </label>
 
         {mode === "register" ? (
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className={labelClass}>Role</span>
-              <select className={inputClass} value={form.role} onChange={(event) => update("role", event.target.value)}>
-                <option value="student">Student</option>
-                <option value="teacher">Teacher</option>
-                <option value="trainer">Trainer</option>
-                <option value="institution">Institution admin</option>
-                <option value="admin">Platform admin</option>
-              </select>
-            </label>
-            <label className="block">
+            <p className="sm:col-span-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500 ring-1 ring-inset ring-slate-200">
+              Sign-up creates a <strong className="font-medium text-slate-700">learner</strong> account. Educator,
+              trainer and administrator accounts are provisioned by your institution&apos;s administrator.
+            </p>
+            <label className="block sm:col-span-2">
               <span className={labelClass}>Grade / level</span>
               <input className={inputClass} value={form.gradeLevel} onChange={(event) => update("gradeLevel", event.target.value)} />
             </label>

@@ -7,6 +7,14 @@
  *   2. risk flagging for the performance forecast
  */
 import { clamp } from "@/lib/utils";
+import { evaluateClassification, type ClassificationMetrics } from "./evaluation";
+
+/**
+ * Version of the feature pipeline. Bump whenever FEATURE_NAMES or extractFeatures
+ * changes so stored models can be matched to the feature contract that produced
+ * them (and stale models retired).
+ */
+export const FEATURE_VERSION = "feat-v2";
 
 export const FEATURE_NAMES = [
   "bias",
@@ -35,11 +43,16 @@ export type ClassifierModel = {
 export type ModelMetrics = {
   accuracy: number;
   logLoss: number;
-  auc: number;
+  auc: number; // ROC-AUC (kept key for backwards compatibility)
   brier: number;
   precision: number;
   recall: number;
   testSize: number;
+  // expanded metrics (added additively)
+  f1: number;
+  prAuc: number; // PR-AUC / average precision
+  ece: number; // expected calibration error
+  mce: number; // maximum calibration error
 };
 
 export type FeatureSample = {
@@ -90,7 +103,7 @@ export const HEURISTIC_MODEL: ClassifierModel = {
   stds: FEATURE_NAMES.map(() => 1),
   samples: 0,
   trainedAt: new Date(0).toISOString(),
-  metrics: { accuracy: 0, logLoss: 0, auc: 0, brier: 0, precision: 0, recall: 0, testSize: 0 },
+  metrics: { accuracy: 0, logLoss: 0, auc: 0, brier: 0, precision: 0, recall: 0, testSize: 0, f1: 0, prAuc: 0, ece: 0, mce: 0 },
 };
 
 export const sigmoid = (z: number) => 1 / (1 + Math.exp(-clamp(z, -30, 30)));
@@ -131,62 +144,50 @@ export function labelPrediction(p: number): PredictionLabel {
   return { key: "at_risk", label: "Too hard now", tone: "rose", hint: "Prerequisite gap likely — revisit foundations first." };
 }
 
-function aucScore(labels: number[], scores: number[]) {
-  const pairs = labels.map((label, index) => ({ label, score: scores[index] }));
-  pairs.sort((a, b) => a.score - b.score);
-  let rank = 1;
-  const ranks: number[] = new Array(pairs.length).fill(0);
-  let i = 0;
-  while (i < pairs.length) {
-    let j = i;
-    while (j < pairs.length - 1 && pairs[j + 1].score === pairs[i].score) j += 1;
-    const avgRank = (rank + (rank + (j - i))) / 2;
-    for (let k = i; k <= j; k += 1) ranks[k] = avgRank;
-    rank += j - i + 1;
-    i = j + 1;
-  }
-  let positives = 0;
-  let negatives = 0;
-  let rankSum = 0;
-  pairs.forEach((pair, index) => {
-    if (pair.label === 1) {
-      positives += 1;
-      rankSum += ranks[index];
-    } else {
-      negatives += 1;
-    }
-  });
-  if (!positives || !negatives) return 0.5;
-  return (rankSum - (positives * (positives + 1)) / 2) / (positives * negatives);
+export type TrainOptions = {
+  epochs?: number;
+  learningRate?: number;
+  l2?: number;
+  /**
+   * Held-out rows to evaluate on. These MUST come chronologically after `rows`
+   * (the caller — the registry — performs the temporal split) so the reported
+   * metrics are an honest out-of-sample estimate with no leakage. When omitted,
+   * metrics fall back to in-sample training data and `metricsOutOfSample` is false.
+   */
+  evalRows?: { x: number[]; y: number }[];
+};
+
+export type TrainResult = {
+  model: ClassifierModel;
+  /** Full held-out classification report (confusion matrix, reliability bins, ...). */
+  evaluation: ClassificationMetrics | null;
+  metricsOutOfSample: boolean;
+};
+
+/**
+ * Train the logistic-regression classifier on the supplied rows.
+ *
+ * IMPORTANT: this function does NOT split the data. Any train/test partitioning
+ * must be done chronologically by the caller and passed via `options.evalRows`,
+ * so the future never leaks into training or into the reported metrics.
+ * Standardisation statistics are learned on the training rows only.
+ */
+export function trainClassifier(rows: { x: number[]; y: number }[], options: TrainOptions = {}): ClassifierModel {
+  return trainClassifierDetailed(rows, options).model;
 }
 
-export function trainClassifier(
-  rows: { x: number[]; y: number }[],
-  options: { epochs?: number; learningRate?: number; l2?: number; seed?: number } = {},
-): ClassifierModel {
+export function trainClassifierDetailed(rows: { x: number[]; y: number }[], options: TrainOptions = {}): TrainResult {
   const epochs = options.epochs ?? 900;
   const lr0 = options.learningRate ?? 0.35;
   const l2 = options.l2 ?? 0.0025;
   const featureCount = FEATURE_NAMES.length;
 
-  const usable = rows.filter((row) => row.x.length === featureCount);
-  if (usable.length < 12) return { ...HEURISTIC_MODEL };
-
-  // cost-sensitive split: shuffle deterministically then 80/20
-  let seed = options.seed ?? 20260119;
-  const rand = () => {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-    return seed / 0x7fffffff;
-  };
-  const shuffled = [...usable];
-  for (let i = shuffled.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(rand() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  const train = rows.filter((row) => row.x.length === featureCount);
+  if (train.length < 12) {
+    return { model: { ...HEURISTIC_MODEL }, evaluation: null, metricsOutOfSample: false };
   }
-  const testSize = Math.max(8, Math.floor(shuffled.length * 0.2));
-  const test = shuffled.slice(0, testSize);
-  const train = shuffled.slice(testSize);
 
+  // Standardise using TRAIN statistics only.
   const means: number[] = new Array(featureCount).fill(0);
   const stds: number[] = new Array(featureCount).fill(1);
   for (let f = 1; f < featureCount; f += 1) {
@@ -216,50 +217,44 @@ export function trainClassifier(
     }
   }
 
-  const evaluate = (rows: { x: number[]; y: number }[]) => {
-    let correct = 0;
-    let logLoss = 0;
-    let brier = 0;
-    let tp = 0;
-    let fp = 0;
-    let fn = 0;
-    const labels: number[] = [];
-    const scores: number[] = [];
-    for (const row of rows) {
-      const p = sigmoid(weightedSum(weights, scale(row.x)));
-      labels.push(row.y);
-      scores.push(p);
-      if ((p >= 0.5 ? 1 : 0) === row.y) correct += 1;
-      logLoss += -(row.y * Math.log(p + 1e-9) + (1 - row.y) * Math.log(1 - p + 1e-9));
-      brier += (p - row.y) ** 2;
-      if (p >= 0.5 && row.y === 1) tp += 1;
-      if (p >= 0.5 && row.y === 0) fp += 1;
-      if (p < 0.5 && row.y === 1) fn += 1;
-    }
-    return {
-      accuracy: correct / rows.length,
-      logLoss: logLoss / rows.length,
-      auc: aucScore(labels, scores),
-      brier: brier / rows.length,
-      precision: tp + fp === 0 ? 0 : tp / (tp + fp),
-      recall: tp + fn === 0 ? 0 : tp / (tp + fn),
-      testSize: rows.length,
-    };
-  };
+  // Evaluate out-of-sample when a held-out set is provided; otherwise in-sample.
+  const evalRows = (options.evalRows ?? train).filter((row) => row.x.length === featureCount);
+  const metricsOutOfSample = Boolean(options.evalRows && options.evalRows.length > 0);
+  const labels: number[] = [];
+  const scores: number[] = [];
+  for (const row of evalRows) {
+    labels.push(row.y);
+    scores.push(sigmoid(weightedSum(weights, scale(row.x))));
+  }
+  const report = labels.length ? evaluateClassification(labels, scores) : null;
+  const metrics: ModelMetrics = report
+    ? {
+        accuracy: report.accuracy,
+        logLoss: report.logLoss,
+        auc: report.rocAuc ?? 0.5,
+        brier: report.brier,
+        precision: report.precision,
+        recall: report.recall,
+        testSize: report.samples,
+        f1: report.f1,
+        prAuc: report.prAuc ?? 0,
+        ece: report.calibrationError,
+        mce: report.maxCalibrationError,
+      }
+    : { ...HEURISTIC_MODEL.metrics };
 
-  const metrics = evaluate(test.map((row) => ({ x: row.x, y: row.y })));
-
-  return {
+  const model: ClassifierModel = {
     name: "difficulty-classifier",
     version: `lr-${new Date().toISOString().slice(0, 10)}`,
     featureNames: [...FEATURE_NAMES],
     weights,
     means,
     stds,
-    samples: usable.length,
+    samples: train.length,
     trainedAt: new Date().toISOString(),
     metrics,
   };
+  return { model, evaluation: report, metricsOutOfSample };
 }
 
 function weightedSum(weights: number[], x: number[]) {

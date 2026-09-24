@@ -1,24 +1,31 @@
 import { eq, max } from "drizzle-orm";
 import { db } from "@/db";
 import { learningPaths, masteryStates, pathMilestones } from "@/db/schema";
-import { fail, ok, toNumber, withUser } from "@/lib/api";
+import { ok, toNumber, withAuth } from "@/lib/api";
 import { clamp, mean, round } from "@/lib/utils";
+import { badRequest, conflict } from "@/lib/http";
+import { parseId, readJsonBody } from "@/lib/validation";
+import { assertPathAccess, requireCapability } from "@/lib/authz";
+import { recordAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  return withUser(async (user) => {
-    if (user.role === "student") return fail("Learners cannot edit milestones.", 403);
-    const body = (await request.json()) as Record<string, unknown>;
-    const pathId = toNumber(body.pathId, 0);
-    const skillId = toNumber(body.skillId, 0);
-    if (!pathId || !skillId) return fail("A path and a skill are required.");
+  return withAuth(request, async ({ user, ip }) => {
+    requireCapability(user, "managePaths", "Learners cannot edit milestones.", "milestones.create");
+    const body = await readJsonBody(request);
+    const pathId = parseId(body.pathId, "pathId");
+    const skillId = parseId(body.skillId, "skillId");
 
+    // Authorization: the path (and thus its student) must be in the caller's scope.
+    const pathRef = await assertPathAccess(user, pathId, "milestones.create");
     const paths = await db.select().from(learningPaths).where(eq(learningPaths.id, pathId)).limit(1);
-    if (!paths.length) return fail("Path not found", 404);
+    if (!paths.length) throw badRequest("Path not found.");
+    void pathRef;
+
     const existing = await db.select().from(pathMilestones).where(eq(pathMilestones.pathId, pathId));
     if (existing.some((milestone) => milestone.skillId === skillId)) {
-      return fail("That skill is already a milestone on this path.", 409);
+      throw conflict("That skill is already a milestone on this path.");
     }
     const maxPosition = await db
       .select({ value: max(pathMilestones.position) })
@@ -48,6 +55,7 @@ export async function POST(request: Request) {
     const all = [...existing, created];
     const progress = round(mean(all.map((milestone) => clamp(milestone.currentMastery / (milestone.targetMastery || 0.85)))), 2);
     await db.update(learningPaths).set({ progress }).where(eq(learningPaths.id, pathId));
+    await recordAudit({ actor: user, action: "milestones.create", resource: "milestones", resourceId: created.id, targetStudentId: paths[0].studentId, ip });
 
     return ok({ milestone: created, progress }, 201);
   });

@@ -20,6 +20,7 @@ import { DEFAULT_BKT, posterior } from "@/lib/ml/knowledge-tracing";
 import { buildLearningPath, rankSkills } from "@/lib/ml/recommender";
 import { forecastPerformance } from "@/lib/ml/forecast";
 import { trainAndPersistClassifier } from "@/lib/ml/registry";
+import { computeAndPersistItemStatistics } from "@/lib/questions/analytics";
 import { MASTERY_TARGET, clamp, mean, round, seededRandom } from "@/lib/utils";
 
 const DIFFICULTY_VALUE: Record<string, number> = { easy: 0.3, medium: 0.55, hard: 0.75, expert: 0.9 };
@@ -34,7 +35,40 @@ const SEED_INSTITUTIONS = [
 
 const AVATAR_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ec4899", "#8b5cf6", "#14b8a6", "#ef4444"];
 
+/**
+ * Whether the demo dataset may be auto-seeded in the current environment.
+ *
+ * Outside production we always allow it — the demo data is what makes the
+ * preview/dev experience useful. In production auto-seeding is DISABLED unless
+ * an operator explicitly opts in with `ALLOW_DEMO_SEED=true`, so a fresh prod
+ * database is never silently populated with demo accounts on the first request.
+ */
+export function seedingAllowed(): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+  return process.env.ALLOW_DEMO_SEED === "true";
+}
+
+/**
+ * Resolve the password used for seeded demo accounts. In production the caller
+ * must supply a strong `SEED_PASSWORD` (>= 12 chars) — we never fall back to a
+ * hardcoded, publicly-known password for privileged accounts there. Outside
+ * production we default to a well-known demo password for convenience.
+ */
+function resolveSeedPassword(): string {
+  const configured = process.env.SEED_PASSWORD;
+  if (process.env.NODE_ENV === "production") {
+    if (!configured || configured.length < 12) {
+      throw new Error(
+        "Refusing to seed demo accounts in production without a strong SEED_PASSWORD (>= 12 characters).",
+      );
+    }
+    return configured;
+  }
+  return configured && configured.length >= 8 ? configured : "password123";
+}
+
 async function runSeed() {
+  if (!seedingAllowed()) return;
   const existing = await db.select({ total: sql<number>`count(*)::int` }).from(users);
   if (Number(existing[0]?.total ?? 0) > 0) return;
 
@@ -47,7 +81,7 @@ async function runSeed() {
   const institutionRows = await db.insert(institutions).values(SEED_INSTITUTIONS).returning();
 
   /* ---------------- users ---------------- */
-  const passwordHash = hashPassword("password123");
+  const passwordHash = hashPassword(resolveSeedPassword());
   const studentRows = await db
     .insert(users)
     .values(
@@ -115,25 +149,87 @@ async function runSeed() {
     }
   }
 
+  // Map Bloom → Depth-of-Knowledge for a sensible cognitive-complexity default.
+  const BLOOM_TO_DOK: Record<string, string> = {
+    remember: "recall",
+    understand: "skill_concept",
+    apply: "skill_concept",
+    analyze: "strategic_thinking",
+    evaluate: "strategic_thinking",
+    create: "extended_thinking",
+  };
+  const authorPool = staffRows.map((s) => s.id);
+  const reviewerId = staffRows.find((s) => s.role === "admin")?.id ?? authorPool[authorPool.length - 1];
+
+  let qIndex = 0;
   const questionValues = Object.entries(QUESTION_BANK).flatMap(([code, items]) => {
     const skill = skillByCode.get(code);
     if (!skill) return [];
-    return items.map(([stem, options, correctIndex, difficultyLabel, bloomLevel, explanation]) => ({
-      skillId: skill.id,
-      stem,
-      options,
-      correctIndex,
-      difficultyLabel,
-      bloomLevel,
-      explanation,
-      estimatedSeconds: 45 + Math.round(DIFFICULTY_VALUE[difficultyLabel] * 90),
-      isActive: true,
-      createdAt: daysAgo(90),
-    }));
+    return items.map(([stem, options, correctIndex, difficultyLabel, bloomLevel, explanation]) => {
+      const i = qIndex++;
+      // Most items are published/monitored (servable); a deterministic minority
+      // demonstrates the rest of the workflow, including an AI-authored draft that
+      // has NOT been auto-trusted.
+      let status = "published";
+      let source = "human";
+      let isActive = true;
+      let reviewed = true;
+      if (i % 7 === 0) status = "monitored";
+      if (i % 29 === 3) {
+        status = "draft";
+        isActive = false;
+        reviewed = false;
+      } else if (i % 31 === 5) {
+        status = "review";
+        isActive = false;
+        reviewed = false;
+      } else if (i % 37 === 9) {
+        status = "validated";
+        isActive = false;
+      } else if (i % 41 === 11) {
+        status = "retired";
+        isActive = false;
+      } else if (i % 43 === 13) {
+        status = "draft";
+        source = "ai";
+        isActive = false;
+        reviewed = false;
+      }
+      const servable = status === "published" || status === "monitored";
+      return {
+        skillId: skill.id,
+        subskill: null as string | null,
+        prerequisiteSkillIds: [] as number[],
+        stem,
+        options,
+        correctIndex,
+        difficultyLabel,
+        difficultyValue: DIFFICULTY_VALUE[difficultyLabel] ?? 0.55,
+        bloomLevel,
+        cognitiveComplexity: BLOOM_TO_DOK[bloomLevel] ?? "skill_concept",
+        explanation,
+        hints: [] as string[],
+        distractorMeta: [] as { optionIndex: number; misconception?: string; rationale?: string }[],
+        estimatedSeconds: 45 + Math.round(DIFFICULTY_VALUE[difficultyLabel] * 90),
+        authorId: source === "ai" ? reviewerId : authorPool[i % authorPool.length],
+        source,
+        version: 1,
+        status,
+        reviewedById: reviewed ? reviewerId : null,
+        reviewedAt: reviewed ? daysAgo(80) : null,
+        publishedAt: servable ? daysAgo(75) : null,
+        retiredAt: status === "retired" ? daysAgo(20) : null,
+        isActive,
+        createdAt: daysAgo(90),
+      };
+    });
   });
   const questionRows = await db.insert(questions).values(questionValues).returning();
+  // Learners only ever see servable (published/monitored) items, so the response
+  // simulation draws from that pool exclusively.
   const questionsBySkill = new Map<number, typeof questionRows>();
   for (const question of questionRows) {
+    if (question.status !== "published" && question.status !== "monitored") continue;
     const list = questionsBySkill.get(question.skillId) ?? [];
     list.push(question);
     questionsBySkill.set(question.skillId, list);
@@ -543,6 +639,11 @@ async function runSeed() {
   /* ---------------- train the classifier on simulated response logs ---------------- */
   await trainAndPersistClassifier();
 
+  /* ---------------- item-quality analytics from observed responses ---------------- */
+  // Populate quality score, discrimination, calibration container and flags so the
+  // item bank ships with real psychometrics, not placeholders.
+  await computeAndPersistItemStatistics();
+
   void staffRows;
   void questionRows;
 }
@@ -552,6 +653,7 @@ const globalForSeed = globalThis as typeof globalThis & {
 };
 
 export function ensureSeeded() {
+  if (!seedingAllowed()) return Promise.resolve();
   if (!globalForSeed.__adaptiqSeedPromise) {
     globalForSeed.__adaptiqSeedPromise = runSeed().catch((error) => {
       globalForSeed.__adaptiqSeedPromise = undefined;

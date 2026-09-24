@@ -1,27 +1,34 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { recommendations } from "@/db/schema";
-import { fail, ok, withUser } from "@/lib/api";
+import { ok, withAuth } from "@/lib/api";
 import { logActivity } from "@/lib/queries";
+import { badRequest } from "@/lib/http";
+import { oneOf, parseId, readJsonBody } from "@/lib/validation";
+import { assertRecommendationAccess, requireCapability } from "@/lib/authz";
+import { recordAudit } from "@/lib/audit";
+import { events } from "@/lib/observability";
 
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: Request, { params }: Params) {
-  return withUser(async (user) => {
-    if (user.role === "student") return fail("Learners cannot change the queue directly.", 403);
+  return withAuth(request, async ({ user, ip }) => {
+    requireCapability(user, "manageRecommendations", "Learners cannot change the queue directly.", "recommendations.update");
     const { id } = await params;
-    const body = (await request.json()) as Record<string, unknown>;
-    const status = String(body.status ?? "");
-    if (!["new", "accepted", "dismissed", "completed"].includes(status)) return fail("Unsupported status.");
+    const recId = parseId(id);
+    await assertRecommendationAccess(user, recId, "recommendations.update");
+
+    const body = await readJsonBody(request);
+    const status = oneOf(body.status, ["new", "accepted", "dismissed", "completed"] as const, "status");
 
     const [updated] = await db
       .update(recommendations)
       .set({ status, actedAt: status === "new" ? null : new Date() })
-      .where(eq(recommendations.id, Number(id)))
+      .where(eq(recommendations.id, recId))
       .returning();
-    if (!updated) return fail("Recommendation not found", 404);
+    if (!updated) throw badRequest("Recommendation not found.");
     await logActivity({
       studentId: updated.studentId,
       type: "recommendation",
@@ -29,15 +36,20 @@ export async function PATCH(request: Request, { params }: Params) {
       summary: `Priority “${updated.title}” marked ${status}`,
       value: updated.priority,
     });
+    await recordAudit({ actor: user, action: "recommendations.update", resource: "recommendations", resourceId: recId, ip });
+    events.recommendationActed({ studentId: updated.studentId, recommendationId: recId, status });
     return ok({ recommendation: updated });
   });
 }
 
-export async function DELETE(_request: Request, { params }: Params) {
-  return withUser(async (user) => {
-    if (user.role === "student") return fail("Learners cannot delete priorities.", 403);
+export async function DELETE(request: Request, { params }: Params) {
+  return withAuth(request, async ({ user, ip }) => {
+    requireCapability(user, "manageRecommendations", "Learners cannot delete priorities.", "recommendations.delete");
     const { id } = await params;
-    await db.delete(recommendations).where(eq(recommendations.id, Number(id)));
+    const recId = parseId(id);
+    await assertRecommendationAccess(user, recId, "recommendations.delete");
+    await db.delete(recommendations).where(eq(recommendations.id, recId));
+    await recordAudit({ actor: user, action: "recommendations.delete", resource: "recommendations", resourceId: recId, ip });
     return ok({ deleted: true });
   });
 }

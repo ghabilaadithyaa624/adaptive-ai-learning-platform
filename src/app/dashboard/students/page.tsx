@@ -3,8 +3,9 @@ import { ActionButton } from "@/components/action-button";
 import { AddLearnerButton, LearnerRowActions } from "@/components/learner-admin";
 import { Avatar, Badge, buttonClass, Card, CardHeader, EmptyState, ProgressBar } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
-import { getInstitutionList, listStudents } from "@/lib/queries";
 import { masteryBand, pct } from "@/lib/utils";
+import { requireStaffPage, scopedInstitutions, scopedLearners } from "@/lib/page-guards";
+import { isPlatformAdmin } from "@/lib/authz";
 
 export const dynamic = "force-dynamic";
 
@@ -14,10 +15,18 @@ export default async function StudentsPage({
   searchParams: Promise<{ q?: string; institutionId?: string }>;
 }) {
   const params = await searchParams;
-  const [user, learners, institutionList] = await Promise.all([
-    requireUser(),
-    listStudents(params.q, params.institutionId ? Number(params.institutionId) : undefined),
-    getInstitutionList(),
+  const user = await requireUser();
+  // The learner directory is staff-only; students use their own profile page.
+  requireStaffPage(user);
+  const [learners, institutionList] = await Promise.all([
+    // Tenant isolation: non-platform-admins are pinned to their own institution
+    // regardless of any institutionId param supplied in the URL.
+    scopedLearners(user, params.q).then((rows) =>
+      isPlatformAdmin(user) && params.institutionId
+        ? rows.filter((r) => r.institutionId === Number(params.institutionId))
+        : rows,
+    ),
+    scopedInstitutions(user),
   ]);
   const canEdit = user.role !== "student";
 

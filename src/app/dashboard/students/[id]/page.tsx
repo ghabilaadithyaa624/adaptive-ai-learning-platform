@@ -3,17 +3,25 @@ import { notFound } from "next/navigation";
 import { ActionButton } from "@/components/action-button";
 import { AddLearnerButton, LearnerRowActions } from "@/components/learner-admin";
 import { StudentOverview } from "@/components/student-overview";
+import { TutorPanel } from "@/components/tutor-panel";
 import { buttonClass, Card, CardHeader } from "@/components/ui";
 import { requireUser } from "@/lib/auth";
-import { getInstitutionList, getStudentDetail } from "@/lib/queries";
+import { getStudentDetail } from "@/lib/queries";
+import { requireStudentPageAccess, scopedInstitutions } from "@/lib/page-guards";
+import { isStudent } from "@/lib/authz";
 
 export const dynamic = "force-dynamic";
 
 export default async function StudentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [user, resolved] = await Promise.all([requireUser(), params]);
-  const detail = await getStudentDetail(Number(resolved.id));
+  const studentId = Number(resolved.id);
+  // SECURITY: enforce that the caller may view THIS learner (self, same-tenant
+  // staff, or platform admin). Prevents cross-student / cross-tenant IDOR.
+  await requireStudentPageAccess(user, studentId);
+  const detail = await getStudentDetail(studentId);
   if (!detail) notFound();
-  const institutionList = await getInstitutionList();
+  // Only staff see the institution picker; students never enumerate tenants.
+  const institutionList = isStudent(user) ? [] : await scopedInstitutions(user);
   const isSelf = user.id === detail.student.id;
 
   return (
@@ -60,6 +68,11 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
           </div>
         )}
       </Card>
+
+      <TutorPanel
+        studentId={detail.student.id}
+        contextLabel={isSelf ? undefined : `coaching ${detail.student.name}`}
+      />
 
       <StudentOverview detail={detail} isSelf={isSelf} />
     </div>

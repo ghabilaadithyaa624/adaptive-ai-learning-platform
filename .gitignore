@@ -11,3 +11,11 @@ __pycache__/
 *.pyc
 .venv/
 env/
+
+# Local security-test throwaway Postgres data
+sectest/pgdata/
+tsconfig.tsbuildinfo
+next-env.d.ts
+
+# test coverage output
+coverage/

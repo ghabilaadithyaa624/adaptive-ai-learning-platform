@@ -1,11 +1,25 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { ensureSeededSafe } from "@/lib/seed";
+import { deepHealth } from "@/lib/observability/health";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
+/**
+ * Deep health / status endpoint for humans, uptime checks, and the operations
+ * dashboard. Reports the application, PostgreSQL, and critical dependencies
+ * with per-check latency, plus table counts for a quick data-presence sanity
+ * check.
+ *
+ * Unlike the previous implementation this endpoint does NOT trigger database
+ * seeding — a health check must be a cheap, read-only observation.
+ *
+ * Returns HTTP 503 when a critical dependency is failing so uptime monitors and
+ * orchestrators react correctly.
+ */
 export async function GET() {
-  const seed = await ensureSeededSafe();
+  const health = await deepHealth();
+
   let database: "up" | "down" = "down";
   let counts: Record<string, number> = {};
   try {
@@ -30,13 +44,20 @@ export async function GET() {
     database = "down";
   }
 
-  return Response.json({
-    status: "ok",
-    service: "adaptiq",
-    database,
-    seeded: seed.seeded,
-    seedError: seed.seeded ? undefined : seed.error,
-    counts,
-    timestamp: new Date().toISOString(),
-  });
+  const status = health.status === "pass" ? "ok" : health.status === "warn" ? "degraded" : "error";
+  const httpStatus = health.status === "fail" ? 503 : 200;
+
+  return Response.json(
+    {
+      status,
+      service: "adaptiq",
+      database,
+      seeded: counts.users > 0,
+      uptimeSeconds: health.uptimeSeconds,
+      checks: health.checks,
+      counts,
+      timestamp: new Date().toISOString(),
+    },
+    { status: httpStatus },
+  );
 }
