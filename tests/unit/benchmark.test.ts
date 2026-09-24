@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { runBenchmark } from "../benchmarks/harness";
+import { runBenchmark } from "../../benchmarks/harness";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const outDir = resolve(here, "../benchmarks");
+const outDir = resolve(here, "../../benchmarks");
 
 describe("adaptive engine benchmark (v2 vs legacy)", () => {
   const result = runBenchmark();

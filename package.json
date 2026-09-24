@@ -9,7 +9,15 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "bench": "vitest run tests/benchmark.test.ts"
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:api": "vitest run tests/api",
+    "test:db": "vitest run tests/db",
+    "test:auth": "vitest run tests/auth",
+    "test:e2e": "vitest run tests/e2e",
+    "test:all": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "bench": "vitest run tests/unit/benchmark.test.ts"
   },
   "dependencies": {
     "dotenv": "17.3.1",
@@ -25,6 +33,7 @@
     "@types/pg": "8.18.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@vitest/coverage-v8": "^2.1.9",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
