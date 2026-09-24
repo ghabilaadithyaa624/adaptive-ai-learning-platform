@@ -1,3 +1,5 @@
+import { createRedisRateLimitStore } from "./rate-limit-redis";
+
 /**
  * Rate limiting with a pluggable backing store.
  *
@@ -5,18 +7,18 @@
  * brute-force / credential-stuffing from a single node and is a meaningful
  * control for single-instance deployments.
  *
- * For horizontally-scaled production, per-instance memory is not enough: replace
- * the store with a shared one (Redis/Upstash) via `configureRateLimitStore()`.
- * A shared store is inherently async; either implement the sync `hit` on top of
- * a pipelined client, or migrate call sites to an async variant. The seam is
- * intentionally isolated here so nothing else changes.
+ * For horizontally-scaled production, set `REDIS_URL` and the limiter switches
+ * automatically to a shared, atomic Redis store (see rate-limit-redis.ts) so
+ * limits are enforced across all replicas. A Redis outage degrades gracefully
+ * to the in-memory fallback. You can also inject a custom store at startup via
+ * `configureRateLimitStore()`.
  */
 
 export type RateResult = { ok: boolean; remaining: number; retryAfterSec: number };
 
 export interface RateLimitStore {
   /** Register one hit for `key` and report whether it is within `limit`/`windowMs`. */
-  hit(key: string, limit: number, windowMs: number): RateResult;
+  hit(key: string, limit: number, windowMs: number): Promise<RateResult>;
 }
 
 type Bucket = { hits: number[] };
@@ -29,7 +31,7 @@ export class InMemoryRateLimitStore implements RateLimitStore {
     this.buckets = seed ?? new Map<string, Bucket>();
   }
 
-  hit(key: string, limit: number, windowMs: number): RateResult {
+  async hit(key: string, limit: number, windowMs: number): Promise<RateResult> {
     const now = Date.now();
     const bucket = this.buckets.get(key) ?? { hits: [] };
     bucket.hits = bucket.hits.filter((t) => now - t < windowMs);
@@ -64,7 +66,8 @@ const globalForRl = globalThis as typeof globalThis & {
 const seed = globalForRl.__adaptiqRateBuckets ?? new Map<string, Bucket>();
 globalForRl.__adaptiqRateBuckets = seed;
 
-let activeStore: RateLimitStore = globalForRl.__adaptiqRateStore ?? new InMemoryRateLimitStore(seed);
+const inMemoryStore = new InMemoryRateLimitStore(seed);
+let activeStore: RateLimitStore = globalForRl.__adaptiqRateStore ?? inMemoryStore;
 globalForRl.__adaptiqRateStore = activeStore;
 
 /** Swap the backing store (e.g. a Redis-backed one) at startup. */
@@ -73,8 +76,22 @@ export function configureRateLimitStore(store: RateLimitStore): void {
   globalForRl.__adaptiqRateStore = store;
 }
 
-export function rateLimit(key: string, limit: number, windowMs: number): RateResult {
+export async function rateLimit(key: string, limit: number, windowMs: number): Promise<RateResult> {
   return activeStore.hit(key, limit, windowMs);
+}
+
+// Auto-activate the shared Redis store when configured (skip in tests). Redis
+// failures fall back to the in-memory store, so this can never break startup.
+if (
+  process.env.REDIS_URL &&
+  process.env.NODE_ENV !== "test" &&
+  !globalForRl.__adaptiqRateStore?.constructor?.name?.includes("Redis")
+) {
+  try {
+    configureRateLimitStore(createRedisRateLimitStore(process.env.REDIS_URL, inMemoryStore));
+  } catch (err) {
+    console.error("[rate-limit] failed to initialize Redis store; using in-memory.", err);
+  }
 }
 
 /** Read a positive integer env override, falling back to a default. */

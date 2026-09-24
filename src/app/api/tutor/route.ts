@@ -83,7 +83,7 @@ export async function POST(request: Request) {
       "tutor.ask",
     );
 
-    const rl = rateLimit(`tutor:${studentId}`, TUTOR_RATE.limit, TUTOR_RATE.windowMs);
+    const rl = await rateLimit(`tutor:${studentId}`, TUTOR_RATE.limit, TUTOR_RATE.windowMs);
     if (!rl.ok) throw tooManyRequests(`Tutor is busy — try again in ${rl.retryAfterSec}s.`);
 
     const intent = oneOf<TutorIntent>(body.intent, TUTOR_INTENTS, "intent");

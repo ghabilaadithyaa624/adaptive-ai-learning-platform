@@ -32,7 +32,7 @@ export async function POST(request: Request) {
 
     if (action === "register") {
       // Rate-limit registration per IP to curb automated account creation.
-      const rl = rateLimit(`register:${ip}`, RATE_LIMITS.register.limit, RATE_LIMITS.register.windowMs);
+      const rl = await rateLimit(`register:${ip}`, RATE_LIMITS.register.limit, RATE_LIMITS.register.windowMs);
       if (!rl.ok) throw tooManyRequests("Too many sign-up attempts. Please try again later.");
 
       const name = reqString(body.name, "Name", { min: 1, max: 120 });
@@ -77,7 +77,7 @@ export async function POST(request: Request) {
     }
 
     // login
-    const rl = rateLimit(`login:${ip}`, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs);
+    const rl = await rateLimit(`login:${ip}`, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs);
     if (!rl.ok) throw tooManyRequests("Too many sign-in attempts. Please wait a moment and try again.");
 
     const email = reqEmail(body.email);
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
     // Constant-ish response regardless of whether the email exists.
     if (!user || !verifyPassword(password, user.passwordHash)) {
       // Second, tighter limit keyed on the email to slow targeted attacks.
-      rateLimit(`login-email:${email}`, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs);
+      await rateLimit(`login-email:${email}`, RATE_LIMITS.login.limit, RATE_LIMITS.login.windowMs);
       await recordAudit({ action: "auth.login", outcome: "denied", ip, detail: `failed login for ${email}` });
       events.auth("login", "failure", { email, reason: "invalid_credentials" });
       throw unauthorized("Those credentials did not match our records.");

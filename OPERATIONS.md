@@ -24,6 +24,8 @@ See `.env.example` for the full list. Production must set at least:
 | `DATABASE_URL` | Postgres connection string | required |
 | `METRICS_TOKEN` | Bearer token guarding `/api/metrics` | **required in prod** — endpoint fails closed (404) without it |
 | `NODE_ENV=production` | Enables prod hardening (HSTS, strict CSP, no auto-seed) | set by the container |
+| `REDIS_URL` | Shared rate-limit store across replicas | required for horizontal scale; falls back to in-memory if unreachable |
+| `TRUSTED_PROXY_COUNT` | Trusted reverse-proxy hops for client-IP extraction | set to your real hop count behind a CDN/LB |
 | `ALLOW_DEMO_SEED` | Leave unset/false in prod | only set `true` for demo/staging environments |
 | `SEED_PASSWORD` | Required (≥12 chars) *if* demo seeding is enabled in prod | never a default password |
 

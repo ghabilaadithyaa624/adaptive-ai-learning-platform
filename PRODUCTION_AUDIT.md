@@ -32,7 +32,7 @@ step (see `OPERATIONS.md`). CI is committed but must be enabled on the GitHub re
 | P2-4 | Metrics endpoint open when token unset | ✅ Fixed & verified |
 | P3-1 | Dev/test-only dependency CVEs | ✅ Fixed (vitest→5) — 1 dev-only chain left (drizzle-kit/esbuild) |
 | P3-2 | Spoofable client IP | ✅ Fixed & verified |
-| P3-3 | In-memory rate limiter doesn't scale | ✅ Pluggable store + configurable limits (Redis adapter documented) |
+| P3-3 | In-memory rate limiter doesn't scale | ✅ Fixed — Redis-backed store (auto-activates on REDIS_URL, in-memory fallback) |
 | P3-4 | Modal a11y gaps | ✅ Fixed |
 
 ---
@@ -49,7 +49,7 @@ step (see `OPERATIONS.md`). CI is committed but must be enabled on the GitHub re
 
 Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build dependency CVEs are resolved; the remaining `npm audit` findings are confined to the test toolchain.
 
-> **Update (2026-09-24):** **All P0, P1, P2, and P3 findings have been remediated in this branch** (see each entry). Also added `docker-compose.yml` for one-command local bring-up (Postgres + auto-migrate + app). The only open items are: a 4-CVE dev-only `drizzle-kit/esbuild` chain (unexposed) and wiring an actual Redis `RateLimitStore` for horizontal scale (seam in place). Verified: typecheck ✅, lint ✅, build ✅, **300/300 tests on vitest 5** ✅, production `npm audit` clean.
+> **Update (2026-09-24):** **All P0, P1, P2, and P3 findings have been remediated in this branch** (see each entry), including a real Redis-backed rate-limit store (auto-activates on `REDIS_URL`, in-memory fallback). Also added `docker-compose.yml` for one-command local bring-up (Postgres + auto-migrate + Redis + app). The only open item is a 4-CVE dev-only `drizzle-kit/esbuild` chain (unexposed — esbuild dev server we never run). Verified: typecheck ✅, lint ✅, build ✅, **300/300 tests on vitest 5** ✅, Redis fallback ✅, production `npm audit` clean.
 
 ---
 
@@ -128,7 +128,7 @@ Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build depe
 
 **P3-2 — Client IP is spoofable — ✅ FIXED** — `src/lib/request-context.ts` `clientIp()` now honours a configured `TRUSTED_PROXY_COUNT` and selects the entry at `len - k` from the `X-Forwarded-For` chain — the IP observed by the outermost trusted proxy, which a client cannot spoof. Default (k=0) resolves to the nearest-proxy-observed IP (correct behind a single reverse proxy). Documented in `.env.example`. Verified via unit + full suite (300/300).
 
-**P3-3 — In-memory rate limiter doesn't scale horizontally — ✅ IMPROVED** — `src/lib/rate-limit.ts` refactored into a pluggable `RateLimitStore` interface with the sliding-window `InMemoryRateLimitStore` as default and a `configureRateLimitStore()` seam to swap in a shared (Redis/Upstash) store for multi-instance deployments; all limits are now env-configurable (`RATE_LIMIT_*`). `docker-compose.yml` includes a commented Redis service as the drop-in target. (A shared store is inherently async — the remaining work is a Redis adapter + awaiting the two call sites, noted in-file.)
+**P3-3 — In-memory rate limiter doesn't scale horizontally — ✅ FIXED** — `src/lib/rate-limit.ts` refactored into a pluggable async `RateLimitStore` interface (sliding-window `InMemoryRateLimitStore` default) and a real `RedisRateLimitStore` (`src/lib/rate-limit-redis.ts`, `ioredis`) implementing an **atomic** sliding-window-log via a Lua script so limits hold across all replicas. It **auto-activates when `REDIS_URL` is set** and **degrades to the in-memory fallback** on any Redis error, so an outage can never take the app down. All limits are env-configurable (`RATE_LIMIT_*`); the four call sites now `await`. `docker-compose.yml` ships an active Redis service wired via `REDIS_URL`. Verified: in-memory enforcement, Redis→in-memory fallback (dead server), and the full suite (300/300) all pass; typecheck/lint/build clean.
 
 **P3-4 — Modal a11y gaps — ✅ FIXED** — `src/components/modal.tsx` now sets `role="dialog"`, `aria-modal="true"`, `aria-labelledby`/`aria-describedby` (via `useId`), traps Tab focus within the dialog, moves focus in on open, and restores focus to the trigger on close (WCAG 2.4.3). Backdrop made non-focusable. (Forms were already accessible — `Field` wraps inputs in a `<label>`.)
 
@@ -168,10 +168,9 @@ Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build depe
 
 ## Remaining work (all P3 enhancements)
 
-All P3 items have been addressed (see the P3 section). Only two small follow-ups remain, both low-risk:
+All P3 items have been implemented. One low-risk follow-up remains:
 
-1. **P3-1 residual** — 4 moderate dev-only CVEs in `drizzle-kit → @esbuild-kit → esbuild`; clear once drizzle-kit ships a non-beta release that drops `@esbuild-kit`. No production/runtime exposure.
-2. **P3-3 residual** — implement the actual Redis-backed `RateLimitStore` (the pluggable seam + `docker-compose` Redis service are in place) when the app is scaled to multiple replicas.
+1. **P3-1 residual** — 4 moderate dev-only CVEs in `drizzle-kit → @esbuild-kit → esbuild`; clear once drizzle-kit ships a non-beta release that drops `@esbuild-kit`. No production/runtime exposure (the CVE is the esbuild dev server, which we never run).
 
 ## Operator pre-launch checklist (not code)
 

@@ -53,20 +53,28 @@ services:
       METRICS_TOKEN: "local-dev-metrics-token"
       # Single reverse proxy assumption for local runs.
       TRUSTED_PROXY_COUNT: "0"
+      # Shared rate-limit store — enables cross-replica limiting. Remove this to
+      # fall back to the per-process in-memory limiter.
+      REDIS_URL: redis://redis:6379
     depends_on:
       db:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
-  # --- Optional: shared store for rate limiting across multiple app replicas ---
-  # Uncomment and wire a Redis-backed RateLimitStore (see src/lib/rate-limit.ts)
-  # when scaling the app horizontally.
-  # redis:
-  #   image: redis:7-alpine
-  #   restart: unless-stopped
-  #   ports:
-  #     - "6379:6379"
+  # Shared store for rate limiting across app replicas (see src/lib/rate-limit.ts).
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   pgdata:
