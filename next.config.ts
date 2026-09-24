@@ -16,6 +16,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Emit a self-contained server bundle (.next/standalone) for a small,
+  // production-ready Docker image. See Dockerfile.
+  output: "standalone",
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

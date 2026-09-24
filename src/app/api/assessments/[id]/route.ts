@@ -79,8 +79,10 @@ export async function DELETE(request: Request, { params }: Params) {
     const { id } = await params;
     const assessmentId = parseId(id);
     await assertAssessmentAccess(user, assessmentId, "assessments.delete");
-    await db.delete(assessmentItems).where(eq(assessmentItems.assessmentId, assessmentId));
-    await db.delete(assessments).where(eq(assessments.id, assessmentId));
+    await db.transaction(async (tx) => {
+      await tx.delete(assessmentItems).where(eq(assessmentItems.assessmentId, assessmentId));
+      await tx.delete(assessments).where(eq(assessments.id, assessmentId));
+    });
     await recordAudit({ actor: user, action: "assessments.delete", resource: "assessments", resourceId: assessmentId, ip });
     return ok({ deleted: true });
   });

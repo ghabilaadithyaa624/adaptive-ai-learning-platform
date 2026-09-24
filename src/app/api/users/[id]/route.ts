@@ -92,21 +92,27 @@ export async function DELETE(request: Request, { params }: Params) {
     // blocks acting on platform admins; platform admins may delete anyone else.
     await assertUserAccess(user, targetId, { write: true }, "users.delete");
 
+    // Atomic cascade: delete all of the account's dependent rows and the user
+    // in a single transaction so a mid-sequence failure cannot leave orphans.
+    // DB-level ON DELETE cascades back this up, but the explicit deletes keep
+    // the intent obvious and independent of any one constraint.
     const assessmentRows = await db.select({ id: assessments.id }).from(assessments).where(eq(assessments.studentId, targetId));
     const assessmentIds = assessmentRows.map((row) => row.id);
     const pathRows = await db.select({ id: learningPaths.id }).from(learningPaths).where(eq(learningPaths.studentId, targetId));
     const pathIds = pathRows.map((row) => row.id);
 
-    if (assessmentIds.length) await db.delete(assessmentItems).where(inArray(assessmentItems.assessmentId, assessmentIds));
-    if (pathIds.length) await db.delete(pathMilestones).where(inArray(pathMilestones.pathId, pathIds));
-    await db.delete(assessments).where(eq(assessments.studentId, targetId));
-    await db.delete(learningPaths).where(eq(learningPaths.studentId, targetId));
-    await db.delete(recommendations).where(eq(recommendations.studentId, targetId));
-    await db.delete(masteryStates).where(eq(masteryStates.studentId, targetId));
-    await db.delete(activityEvents).where(eq(activityEvents.studentId, targetId));
-    await db.delete(tutorInteractions).where(eq(tutorInteractions.studentId, targetId));
-    await db.delete(sessions).where(eq(sessions.userId, targetId));
-    await db.delete(users).where(eq(users.id, targetId));
+    await db.transaction(async (tx) => {
+      if (assessmentIds.length) await tx.delete(assessmentItems).where(inArray(assessmentItems.assessmentId, assessmentIds));
+      if (pathIds.length) await tx.delete(pathMilestones).where(inArray(pathMilestones.pathId, pathIds));
+      await tx.delete(assessments).where(eq(assessments.studentId, targetId));
+      await tx.delete(learningPaths).where(eq(learningPaths.studentId, targetId));
+      await tx.delete(recommendations).where(eq(recommendations.studentId, targetId));
+      await tx.delete(masteryStates).where(eq(masteryStates.studentId, targetId));
+      await tx.delete(activityEvents).where(eq(activityEvents.studentId, targetId));
+      await tx.delete(tutorInteractions).where(eq(tutorInteractions.studentId, targetId));
+      await tx.delete(sessions).where(eq(sessions.userId, targetId));
+      await tx.delete(users).where(eq(users.id, targetId));
+    });
     await recordAudit({ actor: user, action: "users.delete", resource: "users", resourceId: targetId, ip });
     return ok({ deleted: true });
   });

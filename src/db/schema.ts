@@ -32,7 +32,7 @@ export const users = pgTable("users", {
   email: text("email").notNull(),
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().default("student"), // student | teacher | trainer | institution | admin
-  institutionId: integer("institution_id"),
+  institutionId: integer("institution_id").references(() => institutions.id, { onDelete: "set null" }),
   gradeLevel: text("grade_level"),
   cohort: text("cohort"),
   avatarColor: text("avatar_color").notNull().default("#4f46e5"),
@@ -48,7 +48,7 @@ export const users = pgTable("users", {
 export const sessions = pgTable("sessions", {
   id: serial("id").primaryKey(),
   token: text("token").notNull(),
-  userId: integer("user_id").notNull(),
+  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
@@ -70,7 +70,7 @@ export const subjects = pgTable("subjects", {
 
 export const skills = pgTable("skills", {
   id: serial("id").primaryKey(),
-  subjectId: integer("subject_id").notNull(),
+  subjectId: integer("subject_id").references(() => subjects.id, { onDelete: "cascade" }).notNull(),
   name: text("name").notNull(),
   code: text("code").notNull(),
   description: text("description").notNull().default(""),
@@ -82,7 +82,7 @@ export const skills = pgTable("skills", {
 
 export const questions = pgTable("questions", {
   id: serial("id").primaryKey(),
-  skillId: integer("skill_id").notNull(),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "cascade" }).notNull(),
   /** Optional finer-grained subskill/topic tag within the skill. */
   subskill: text("subskill"),
   /** Question-level prerequisite skills (independent of the skill taxonomy edges). */
@@ -107,13 +107,13 @@ export const questions = pgTable("questions", {
   estimatedSeconds: integer("estimated_seconds").notNull().default(60),
 
   /* --------------------------- authoring / provenance --------------------------- */
-  authorId: integer("author_id"),
+  authorId: integer("author_id").references(() => users.id, { onDelete: "set null" }),
   source: text("source").notNull().default("human"), // human | ai | imported
   version: integer("version").notNull().default(1),
 
   /* ------------------------------- workflow ------------------------------- */
   status: text("status").notNull().default("draft"), // draft | review | validated | published | monitored | retired
-  reviewedById: integer("reviewed_by_id"),
+  reviewedById: integer("reviewed_by_id").references(() => users.id, { onDelete: "set null" }),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
   reviewNotes: text("review_notes"),
   publishedAt: timestamp("published_at", { withTimezone: true }),
@@ -144,7 +144,7 @@ export const questions = pgTable("questions", {
  */
 export const itemStatistics = pgTable("item_statistics", {
   id: serial("id").primaryKey(),
-  questionId: integer("question_id").notNull(),
+  questionId: integer("question_id").references(() => questions.id, { onDelete: "cascade" }).notNull(),
   sampleSize: integer("sample_size").notNull().default(0),
   facility: real("facility").notNull().default(0), // proportion correct (p-value)
   discrimination: real("discrimination").notNull().default(0), // corrected point-biserial
@@ -170,7 +170,7 @@ export const itemStatistics = pgTable("item_statistics", {
 
 export const assessments = pgTable("assessments", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id").notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
   title: text("title").notNull(),
   mode: text("mode").notNull().default("adaptive_quiz"), // diagnostic | adaptive_quiz | practice
   status: text("status").notNull().default("in_progress"), // in_progress | completed | abandoned
@@ -192,9 +192,9 @@ export const assessments = pgTable("assessments", {
 
 export const assessmentItems = pgTable("assessment_items", {
   id: serial("id").primaryKey(),
-  assessmentId: integer("assessment_id").notNull(),
-  questionId: integer("question_id").notNull(),
-  skillId: integer("skill_id").notNull(),
+  assessmentId: integer("assessment_id").references(() => assessments.id, { onDelete: "cascade" }).notNull(),
+  questionId: integer("question_id").references(() => questions.id, { onDelete: "cascade" }).notNull(),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "cascade" }).notNull(),
   sequence: integer("sequence").notNull().default(1),
   studentAnswer: integer("student_answer"),
   isCorrect: boolean("is_correct"),
@@ -216,8 +216,8 @@ export const assessmentItems = pgTable("assessment_items", {
 
 export const masteryStates = pgTable("mastery_states", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id").notNull(),
-  skillId: integer("skill_id").notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "cascade" }).notNull(),
   mastery: real("mastery").notNull().default(0.4),
   priorMastery: real("prior_mastery").notNull().default(0.4),
   attempts: integer("attempts").notNull().default(0),
@@ -237,7 +237,7 @@ export const masteryStates = pgTable("mastery_states", {
 
 export const learningPaths = pgTable("learning_paths", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id").notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
   title: text("title").notNull(),
   objective: text("objective").notNull().default(""),
   status: text("status").notNull().default("active"), // draft | active | paused | completed
@@ -250,8 +250,8 @@ export const learningPaths = pgTable("learning_paths", {
 
 export const pathMilestones = pgTable("path_milestones", {
   id: serial("id").primaryKey(),
-  pathId: integer("path_id").notNull(),
-  skillId: integer("skill_id").notNull(),
+  pathId: integer("path_id").references(() => learningPaths.id, { onDelete: "cascade" }).notNull(),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "cascade" }).notNull(),
   position: integer("position").notNull().default(1),
   status: text("status").notNull().default("available"), // locked | available | in_progress | completed
   targetMastery: real("target_mastery").notNull().default(0.85),
@@ -266,9 +266,9 @@ export const pathMilestones = pgTable("path_milestones", {
 
 export const recommendations = pgTable("recommendations", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id").notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
   kind: text("kind").notNull().default("skill"), // skill | question | path | review
-  skillId: integer("skill_id"),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   reason: text("reason").notNull().default(""),
   priority: real("priority").notNull().default(0.5),
@@ -332,6 +332,11 @@ export const modelEvaluations = pgTable("model_evaluations", {
 /* Security audit log                                                   */
 /* ------------------------------------------------------------------ */
 
+// NOTE: audit_logs intentionally has NO foreign keys on actorId /
+// targetStudentId / institutionId. A security/forensic trail must survive the
+// deletion of the referenced accounts, and identity is preserved via the
+// denormalized actorEmail/actorRole snapshots, so we keep the raw ids rather
+// than cascading or nulling them.
 export const auditLogs = pgTable("audit_logs", {
   id: serial("id").primaryKey(),
   actorId: integer("actor_id"),
@@ -369,13 +374,13 @@ export const auditLogs = pgTable("audit_logs", {
  */
 export const tutorInteractions = pgTable("tutor_interactions", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id").notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
   /** Skill the exchange was grounded in (null for skill-agnostic requests). */
-  skillId: integer("skill_id"),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "set null" }),
   /** Assessment the exchange was tied to, when tutoring happens mid-session. */
-  assessmentId: integer("assessment_id"),
+  assessmentId: integer("assessment_id").references(() => assessments.id, { onDelete: "set null" }),
   /** Assessment item in play, when the request references a specific item. */
-  itemId: integer("item_id"),
+  itemId: integer("item_id").references(() => assessmentItems.id, { onDelete: "set null" }),
   /** Capability actually served (may differ from the requested one — see policy). */
   intent: text("intent").notNull(), // explain | hint | socratic | worked_example | diagnose | remediate | next_activity
   /** The intent the learner asked for, before policy adjustments. */
@@ -404,9 +409,9 @@ export const tutorInteractions = pgTable("tutor_interactions", {
 
 export const activityEvents = pgTable("activity_events", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id"),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }),
   type: text("type").notNull().default("practice"), // practice | assessment | recommendation | path
-  skillId: integer("skill_id"),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "set null" }),
   summary: text("summary").notNull(),
   value: real("value").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Avatar, buttonClass } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { cn, roleLabels } from "@/lib/utils";
@@ -36,9 +36,13 @@ export function AppShell({ user, children }: { user: ShellUser; children: ReactN
   const [mobileOpen, setMobileOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
-  useEffect(() => {
+  // Close the mobile nav when the route changes — done via the render-time
+  // "adjust state when a prop changes" pattern instead of a setState-in-effect.
+  const [prevPathname, setPrevPathname] = useState(pathname);
+  if (pathname !== prevPathname) {
+    setPrevPathname(pathname);
     setMobileOpen(false);
-  }, [pathname]);
+  }
 
   const items = NAV.filter((item) => !item.roles || item.roles.includes(user.role)).map((item) =>
     user.role === "student" && item.href === "/dashboard/students"

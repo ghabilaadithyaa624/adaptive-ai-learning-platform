@@ -4,16 +4,33 @@
 **Branch:** `arena/01a0d1f6-adaptive-ai-learning-platform`
 **Scope:** Full-stack audit across 24 dimensions + all quality gates.
 
-## Verdict: ❌ NOT production-ready
+## Verdict: 🟢 Production-ready pending operator setup (all P0/P1/P2 remediated)
 
-The platform is architecturally strong, deterministically sound, and well tested (300/300),
-but it ships with a **P0 credential-exposure defect** (auto-seeded platform-admin account with a
-hardcoded password, triggered by an unauthenticated page load) plus several **P1 operational gaps**
-(no versioned migrations, no CI/CD, no deployment/backup story, critical dependency CVEs). These
-must be resolved before any production deployment.
+The platform is architecturally strong, deterministically sound, and well tested (300/300).
+The initial audit found a **P0 credential-exposure defect** plus several **P1/P2 gaps**. As of the
+latest update **every P0, P1, and P2 finding has been remediated and verified in this branch**
+(see each entry). The remaining open items are all **P3 enhancements**.
 
-One regression I introduced with the AI-tutor feature (learner data not erased on account deletion)
-was found during this audit and **fixed in place** — see P1-5.
+The one thing still outside the code's control: the operator must **actually perform the documented
+operational setup** before go-live — configure managed Postgres backups/PITR, set the required
+production secrets (`METRICS_TOKEN`, and `DATABASE_URL`), and run `npm run db:migrate` as a deploy
+step (see `OPERATIONS.md`). CI is committed but must be enabled on the GitHub repo.
+
+### Remediation summary (this branch)
+
+| ID | Finding | Status |
+|----|---------|--------|
+| P0-1 | Auto-seeded admin with hardcoded password | ✅ Fixed & verified |
+| P1-1 | Critical/high runtime dependency CVEs (next/postcss/sharp) | ✅ Fixed & verified |
+| P1-2 | No versioned DB migrations | ✅ Fixed |
+| P1-3 | No Dockerfile / CI / env template | ✅ Fixed |
+| P1-4 | No backup / DR / runbook docs | ✅ Fixed (`OPERATIONS.md`) |
+| P1-5 | Learner data not erased on account deletion | ✅ Fixed |
+| P2-1 | Lint gate failing (3 errors) | ✅ Fixed |
+| P2-2 | No DB foreign keys / non-transactional deletes | ✅ Fixed & verified |
+| P2-3 | No Content-Security-Policy | ✅ Fixed & verified |
+| P2-4 | Metrics endpoint open when token unset | ✅ Fixed & verified |
+| P3-1..4 | Dev-only CVEs, spoofable IP, in-memory rate limiter, modal a11y | Open (enhancements) |
 
 ---
 
@@ -24,7 +41,7 @@ was found during this audit and **fixed in place** — see P1-5.
 | Typecheck | `tsc --noEmit` | ✅ PASS (exit 0) |
 | Build | `next build` | ✅ PASS (all routes compiled, incl. `/api/tutor`) |
 | Unit + integration + e2e | full `vitest run` (31 files) | ✅ PASS 300/300 |
-| Lint | `eslint .` | ❌ FAIL (exit 1) — 3 errors |
+| Lint | `eslint .` | ✅ PASS (was 3 errors — fixed, P2-1) |
 | Dependency audit | `npm audit` | ⚠️ runtime/build CVEs **fixed**; 10 dev/test-only remain (need breaking vitest 5 bump → P3-1) |
 
 Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build dependency CVEs are resolved; the remaining `npm audit` findings are confined to the test toolchain.
@@ -54,23 +71,21 @@ Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build depe
 - **Impact:** The Next CVEs can bypass authorization performed in middleware; postcss/sharp affect the build and image pipeline.
 - **Fix (applied):** Upgraded `next` 16.2.6 → **16.3.6** (and `eslint-config-next` to match), and `postcss` 8.5.8 → **8.5.28**; `sharp` was transitively patched by the Next bump. Re-verified: typecheck ✅, build ✅, **300/300** tests ✅. `npm audit` now reports **no runtime/build CVEs** — only dev/test-only tooling remains (see P3-1).
 
-**P1-2 — No versioned database migrations**
-- **Files:** no `drizzle/` migration dir; `package.json` scripts (no `db:generate`/`db:migrate`); `tests/setup/global.ts` uses `drizzle-kit push --force`.
-- **Problem:** Schema is applied only via `drizzle-kit push --force`, which is **destructive and unversioned**. There is no migration history, no forward/rollback path, no way to evolve a production DB safely.
-- **Impact:** Any schema change risks data loss; no reproducible prod schema; no rollback. Blocks safe operation.
-- **Fix:** Adopt versioned drizzle migrations (`drizzle-kit generate` → checked-in SQL, `drizzle-kit migrate` on deploy). Reserve `push --force` for tests only.
+**P1-2 — No versioned database migrations — ✅ FIXED**
+- **Files:** `drizzle/0000_init.sql` (+ `drizzle/meta/`), `drizzle.config.ts`, `package.json` scripts.
+- **Problem:** Schema was applied only via `drizzle-kit push --force`, which is **destructive and unversioned** — no migration history, no forward/rollback path.
+- **Fix (applied):** Adopted versioned Drizzle migrations. Added `drizzle.config.ts` (env-driven `DATABASE_URL`, `out: ./drizzle`), generated the initial migration (all tables + the 24 new FK constraints), and added `db:generate` / `db:migrate` / `db:push` scripts. Verified: `db:migrate` applies cleanly to a fresh DB and the test suite (300/300) passes against the migrated schema. `push --force` is now reserved for the disposable test DB. Deploy process documented in `OPERATIONS.md`.
 
-**P1-3 — No deployment, CI, or environment-config artifacts**
-- **Files:** none present — no `Dockerfile`, no `docker-compose.yml`, no `.github/workflows/`, no `.env.example` (only `observability/prometheus.yml` + `alerts.yml` exist).
-- **Problem:** No reproducible build/runtime image, no CI running the gates (which would already be catching lint + audit failures), no documented required env vars.
-- **Impact:** No automated quality enforcement; error-prone manual deploys; onboarding/ops friction.
-- **Fix:** Add a `Dockerfile` (multi-stage, non-root), a CI workflow running typecheck/lint/test/build/`npm audit`, and a committed `.env.example` documenting `DATABASE_URL`, `METRICS_TOKEN`, `LOG_LEVEL`, `DB_POOL_*` (and any LLM/tutor provider vars).
+**P1-3 — No deployment, CI, or environment-config artifacts — ✅ FIXED**
+- **Files:** `Dockerfile`, `.dockerignore`, `.github/workflows/ci.yml`, `.env.example`, `next.config.ts` (`output: "standalone"`).
+- **Problem:** No reproducible image, no CI running the gates, no documented env vars.
+- **Fix (applied):** Added a multi-stage, **non-root** `Dockerfile` building the Next.js standalone server (verified it emits `server.js`) with a container `HEALTHCHECK` on `/api/ready`; a `.dockerignore`; a GitHub Actions **CI** pipeline (`quality`: typecheck+lint+build; `test`: Postgres service → migrate → full suite; `security`: `npm audit --omit=dev --audit-level=high`); and a committed `.env.example` documenting every variable. Enable Actions on the repo to activate the gate.
 
-**P1-4 — No backup / disaster-recovery / runbook documentation**
-- **Files:** docs absent (only `OBSERVABILITY.md`, `TUTOR.md`).
-- **Problem:** No documented backup schedule, restore procedure, RPO/RTO, or incident runbook for the Postgres store that holds all learner data.
-- **Impact:** Data loss is unrecoverable in practice; on-call has no playbook.
-- **Fix:** Document automated Postgres backups (PITR), a tested restore procedure, and an ops runbook (readiness probe `/api/ready` already returns 503 on dependency failure — reference it).
+**P1-4 — No backup / disaster-recovery / runbook documentation — ✅ FIXED**
+- **Files:** `OPERATIONS.md`.
+- **Problem:** No documented backup schedule, restore procedure, RPO/RTO, or incident runbook.
+- **Fix (applied):** Added `OPERATIONS.md` — build & release order, migration deploy process, automated backups + PITR with RPO ≤ 5 min / RTO ≤ 60 min targets, `pg_dump`/`pg_restore` procedures, a DR scenario table + restore drill, monitoring/health/audit references, an incident-response checklist, and the data-erasure guarantee.
+- **Residual (operator action):** the *procedures* are documented, but the operator must actually enable managed backups/PITR and periodically test restores — this cannot be satisfied in code.
 
 **P1-5 — (FIXED in this audit) Learner data not erased on account deletion**
 - **Files:** `src/app/api/users/[id]/route.ts`, `src/app/api/students/[id]/route.ts`.
@@ -82,29 +97,25 @@ Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build depe
 
 ### P2 — Important (should fix soon; degrades safety/quality/maintainability)
 
-**P2-1 — Lint gate fails (3 errors)**
-- **Files:** `src/components/quiz-runner.tsx:63` (`react-hooks/purity`), `:64` (`react-hooks/set-state-in-effect`), `src/components/shell.tsx:40` (`set-state-in-effect`).
-- **Problem:** Pre-existing React-hooks violations fail `npm run lint` (exit 1).
-- **Impact:** Red CI gate; the set-state-in-effect patterns can cause extra renders / subtle state bugs.
-- **Fix:** Refactor the effects to derive state during render or guard the state updates; re-run `eslint .` to green.
+**P2-1 — Lint gate fails (3 errors) — ✅ FIXED**
+- **Files:** `src/components/quiz-runner.tsx`, `src/components/shell.tsx`.
+- **Problem:** React-hooks violations (`react-hooks/purity` from `Date.now()` in render; two `set-state-in-effect`) failed `npm run lint`.
+- **Fix (applied):** Replaced the reset-state-on-change effects with React's recommended render-time "adjust state when a prop changes" pattern (tracking the previous value), and moved `Date.now()` into an effect. `eslint .` now exits 0.
 
-**P2-2 — No database-level referential integrity + non-transactional cascading deletes**
-- **Files:** `src/db/schema.ts` (0 `references()`, 0 `onDelete`); deletion flows in `src/app/api/{users,students,skills,questions,paths}/[id]/route.ts`.
-- **Problem:** All relationships are bare integer columns — no FK constraints. Referential integrity depends entirely on hand-written app-side cascades, which run as **sequential, non-transactional** statements. A mid-sequence failure leaves partial/orphaned data, and nothing prevents inserting rows that reference non-existent parents.
-- **Impact:** Orphaned rows, silent integrity drift, partial deletes on error.
-- **Fix:** Add drizzle `.references(() => parent.id, { onDelete: "cascade" | "set null" })` to child columns (backed by a migration — see P1-2), and wrap each multi-table deletion in `db.transaction(...)`.
+**P2-2 — No database-level referential integrity + non-transactional cascading deletes — ✅ FIXED**
+- **Files:** `src/db/schema.ts`; deletion flows in `src/app/api/{users,students,skills,questions,paths,assessments}/[id]/route.ts`.
+- **Problem:** All relationships were bare integer columns — no FK constraints; app-side cascades ran as sequential, non-transactional statements.
+- **Fix (applied):** Added **24 foreign keys** with deliberate `onDelete` semantics — `cascade` for owned children (a learner's assessments/items/mastery/paths/recs/tutor interactions/sessions), `set null` for soft links (question author/reviewer, nullable skill refs). `audit_logs` is intentionally left FK-free to preserve forensic history (documented in the schema). Wrapped all six multi-table deletions in `db.transaction(...)`. Verified on a live Postgres: cascade delete removes dependents, `set null` nulls soft links, and orphan inserts are now rejected (`SQLSTATE 23503`); full seed + 300/300 tests pass under the constraints.
 
-**P2-3 — No Content-Security-Policy header**
-- **File:** `next.config.ts` (sets `X-Content-Type-Options`, `Referrer-Policy`, HSTS in prod, `Permissions-Policy`; no CSP).
-- **Problem:** No CSP defense-in-depth against XSS/injection. (Mitigated somewhat: React escaping in use, `0` `dangerouslySetInnerHTML`, `0` `sql.raw` in `src/`.)
-- **Impact:** Larger blast radius if any XSS sink is introduced later.
-- **Fix:** Add a strict CSP (`default-src 'self'`, explicit script/style/connect sources; nonce for any inline). Note `X-Frame-Options` is intentionally omitted — keep only if framing is a product requirement, otherwise add `frame-ancestors`.
+**P2-3 — No Content-Security-Policy header — ✅ FIXED**
+- **Files:** `src/middleware.ts` (new).
+- **Problem:** No CSP defense-in-depth against XSS/injection.
+- **Fix (applied):** Added a **nonce-based strict CSP** via middleware (Next.js's documented App Router approach): a per-request nonce + `'strict-dynamic'` so scripts run WITHOUT `'unsafe-inline'`; `default-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, restricted img/font/connect. Verified against a running production server: page returns 200, the CSP header is present, and Next stamps the nonce onto every script tag (nothing blocked). `frame-ancestors` is intentionally left unset so the app remains embeddable in the trusted preview (consistent with the existing X-Frame-Options decision).
 
-**P2-4 — Metrics endpoint open when token unset**
-- **File:** `src/app/api/metrics/route.ts` (Bearer `METRICS_TOKEN`, but no token ⇒ open).
-- **Problem:** If `METRICS_TOKEN` is not configured, `/api/metrics` serves internal telemetry unauthenticated.
-- **Impact:** Information disclosure of operational metrics in a misconfigured deploy.
-- **Fix:** Fail closed — return 503/404 when `METRICS_TOKEN` is unset in production, and document it as required in `.env.example`.
+**P2-4 — Metrics endpoint open when token unset — ✅ FIXED**
+- **File:** `src/app/api/metrics/route.ts`.
+- **Problem:** With `METRICS_TOKEN` unset, `/api/metrics` served internal telemetry unauthenticated.
+- **Fix (applied):** Fails closed — returns **404 in production** when `METRICS_TOKEN` is unset (open only in non-prod for local dev). Verified: prod server with no token returns 404. Documented as required in `.env.example` and `OPERATIONS.md`.
 
 ---
 
@@ -126,12 +137,12 @@ Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build depe
 |---|-----------|---------|-------|
 | 1 | Architecture | 🟢 Good | Clean separation: engine/ml/queries/authz/api layers; deterministic core preserved. |
 | 2 | Security (auth) | 🟢 Strong | scrypt (N=16384,r8,p1), `timingSafeEqual`, httpOnly+secure+sameSite=lax cookies, 14d TTL, suspended-account denial, session revocation. |
-| 3 | Security (app) | 🟡 Mixed | **P0-1** seed; CSRF same-origin checks present; no raw SQL / no dangerous HTML; no CSP (P2-3); metrics open if unset (P2-4). |
+| 3 | Security (app) | 🟢 Good | P0-1 seed fixed; nonce-based CSP added; metrics fail-closed; CSRF same-origin checks; no raw SQL / no dangerous HTML. |
 | 4 | RBAC | 🟢 Good | `authz.ts` capability model + `assert*Access` used across routes. |
 | 5 | Tenant isolation | 🟢 Good | `accessibleStudentIds`/institution scoping enforced in queries & authz. |
-| 6 | DB integrity | 🔴 Weak | **P2-2** no FKs, non-transactional cascades. |
+| 6 | DB integrity | 🟢 Good | 24 FKs with cascade/set-null (P2-2 fixed); transactional deletes; integrity verified. |
 | 7 | API correctness | 🟢 Good | Consistent `withAuth`/validation/error envelope; 300 tests cover routes. |
-| 8 | Frontend | 🟢 Good | Typed client patterns; **P2-1** lint errors. |
+| 8 | Frontend | 🟢 Good | Typed client patterns; lint clean (P2-1 fixed). |
 | 9 | Accessibility | 🟡 Partial | Labels OK; modal semantics/focus gaps (P3-4). |
 | 10 | Performance | 🟢 Good | Caching of stable reference data (not student data); pool config; indexes on hot paths. |
 | 11 | ML correctness | 🟢 Good | Deterministic BKT/recommender/forecast; pure `buildLearnerState`; covered by tests. |
@@ -141,25 +152,31 @@ Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build depe
 | 15 | Testing | 🟢 Strong | 300/300 across unit/integration/api/auth/db/e2e; deterministic. |
 | 16 | Observability | 🟢 Strong | Metrics/counters/histograms, redaction policy, readiness probe. |
 | 17 | Error handling | 🟢 Good | Central `handleError`; no stack leakage; audit outcomes on denials. |
-| 18 | Deployment | 🔴 Missing | **P1-3** no Dockerfile/CI. |
-| 19 | Env config | 🟡 Partial | **P1-3** no `.env.example`; vars read directly. |
-| 20 | Secrets mgmt | 🔴 Weak | **P0-1** hardcoded seed password; **P2-4** metrics token optional. |
-| 21 | Backups | 🔴 Missing | **P1-4**. |
-| 22 | Migrations | 🔴 Missing | **P1-2**. |
-| 23 | Disaster recovery | 🔴 Missing | **P1-4** no runbook/RPO/RTO. |
-| 24 | Privacy / PII | 🟡 Good-ish | Redaction drops secrets & masks PII (`src/lib/observability/redact.ts`); erasure gap **P1-5 fixed**. |
+| 18 | Deployment | 🟢 Good | Dockerfile (standalone, non-root) + GitHub Actions CI (P1-3 fixed). |
+| 19 | Env config | 🟢 Good | `.env.example` documents all vars (P1-3 fixed). |
+| 20 | Secrets mgmt | 🟢 Good | No hardcoded prod password (P0-1); metrics token required/fail-closed (P2-4). |
+| 21 | Backups | 🟡 Documented | Procedures in OPERATIONS.md (P1-4); operator must enable + test them. |
+| 22 | Migrations | 🟢 Good | Versioned drizzle migrations + db:migrate (P1-2 fixed). |
+| 23 | Disaster recovery | 🟡 Documented | Runbook + RPO/RTO + drill in OPERATIONS.md (P1-4). |
+| 24 | Privacy / PII | 🟢 Good | Redaction drops secrets & masks PII; transactional erasure incl. tutor data (P1-5 fixed). |
 | 25 | Audit logging | 🟢 Good | `recordAudit` on mutating/deny paths with actor/resource/ip. |
 
 ---
 
-## Recommended remediation order
+## Remaining work (all P3 enhancements)
 
-1. **P0-1** — disable prod auto-seed & remove hardcoded admin password. *(blocks launch)*
-2. **P1-1** — upgrade Next + patch CVEs.
-3. **P1-2 / P2-2** — versioned migrations + FK constraints + transactional deletes.
-4. **P1-3 / P1-4** — Dockerfile, CI running gates, `.env.example`, backup/DR docs.
-5. **P2-1 / P2-3 / P2-4** — fix lint, add CSP, fail-closed metrics.
-6. **P3** — dev-dep CVEs, trusted-proxy IP, shared rate limiter, modal a11y.
+1. **P3-1** — upgrade the test toolchain (breaking vitest 5 bump) to clear dev-only CVEs.
+2. **P3-2** — derive client IP from a configured trusted-proxy depth (hardens IP-keyed rate limiting).
+3. **P3-3** — back the rate limiter with a shared store (Redis) for multi-instance deployments.
+4. **P3-4** — add `role="dialog"`/`aria-modal` + focus trap to the modal.
+
+## Operator pre-launch checklist (not code)
+
+- [ ] Set production secrets: `DATABASE_URL`, `METRICS_TOKEN`; leave `ALLOW_DEMO_SEED` unset.
+- [ ] Enable managed Postgres automated backups + PITR; run a test restore.
+- [ ] Wire `npm run db:migrate` into the deploy pipeline (before rolling app containers).
+- [ ] Enable GitHub Actions so the committed CI pipeline gates merges.
+- [ ] Point Prometheus at `/api/metrics` with the token; load `observability/alerts.yml`.
 
 ## Confirmed strengths (evidence-backed)
 - Typecheck clean; build clean; **300/300** tests green.

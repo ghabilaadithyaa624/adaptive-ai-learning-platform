@@ -57,11 +57,23 @@ export function QuizRunner({
   const [log, setLog] = useState<
     { skill: string; correct: boolean; predicted: number; before: number; after: number }[]
   >([]);
-  const startedAt = useRef<number>(Date.now());
+  const startedAt = useRef<number>(0);
 
+  // Reset the selected answer when the question changes. This is the
+  // React-recommended "adjust state during render" pattern (see
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes),
+  // which avoids a cascading setState-in-effect.
+  const [shownItemId, setShownItemId] = useState<number | null>(question?.itemId ?? null);
+  if ((question?.itemId ?? null) !== shownItemId) {
+    setShownItemId(question?.itemId ?? null);
+    setSelected(null);
+  }
+
+  // Timestamp the moment each question is shown so we can measure response
+  // time. `Date.now()` is impure, so it must run in an effect rather than
+  // during render.
   useEffect(() => {
     startedAt.current = Date.now();
-    setSelected(null);
   }, [question?.itemId]);
 
   const submit = async () => {

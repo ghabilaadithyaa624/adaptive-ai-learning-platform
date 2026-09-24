@@ -139,9 +139,11 @@ export async function DELETE(request: Request, { params }: Params) {
     requireCapability(user, "manageContent", "Learners cannot delete items.", "questions.delete");
     const { id } = await params;
     const questionId = parseId(id);
-    await db.delete(assessmentItems).where(eq(assessmentItems.questionId, questionId));
-    await db.delete(itemStatistics).where(eq(itemStatistics.questionId, questionId));
-    await db.delete(questions).where(eq(questions.id, questionId));
+    await db.transaction(async (tx) => {
+      await tx.delete(assessmentItems).where(eq(assessmentItems.questionId, questionId));
+      await tx.delete(itemStatistics).where(eq(itemStatistics.questionId, questionId));
+      await tx.delete(questions).where(eq(questions.id, questionId));
+    });
     await recordAudit({ actor: user, action: "questions.delete", resource: "questions", resourceId: questionId, ip });
     invalidate(CACHE_KEYS.skillCatalog); // per-skill question counts changed
     return ok({ deleted: true });

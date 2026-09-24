@@ -102,15 +102,18 @@ export async function DELETE(request: Request, { params }: Params) {
     const pathRows = await db.select({ id: learningPaths.id }).from(learningPaths).where(eq(learningPaths.studentId, studentId));
     const pathIds = pathRows.map((row) => row.id);
 
-    if (assessmentIds.length) await db.delete(assessmentItems).where(inArray(assessmentItems.assessmentId, assessmentIds));
-    if (pathIds.length) await db.delete(pathMilestones).where(inArray(pathMilestones.pathId, pathIds));
-    await db.delete(assessments).where(eq(assessments.studentId, studentId));
-    await db.delete(learningPaths).where(eq(learningPaths.studentId, studentId));
-    await db.delete(recommendations).where(eq(recommendations.studentId, studentId));
-    await db.delete(masteryStates).where(eq(masteryStates.studentId, studentId));
-    await db.delete(activityEvents).where(eq(activityEvents.studentId, studentId));
-    await db.delete(tutorInteractions).where(eq(tutorInteractions.studentId, studentId));
-    await db.delete(users).where(and(eq(users.id, studentId), eq(users.role, "student")));
+    // Atomic cascade delete (see users/[id] route for rationale).
+    await db.transaction(async (tx) => {
+      if (assessmentIds.length) await tx.delete(assessmentItems).where(inArray(assessmentItems.assessmentId, assessmentIds));
+      if (pathIds.length) await tx.delete(pathMilestones).where(inArray(pathMilestones.pathId, pathIds));
+      await tx.delete(assessments).where(eq(assessments.studentId, studentId));
+      await tx.delete(learningPaths).where(eq(learningPaths.studentId, studentId));
+      await tx.delete(recommendations).where(eq(recommendations.studentId, studentId));
+      await tx.delete(masteryStates).where(eq(masteryStates.studentId, studentId));
+      await tx.delete(activityEvents).where(eq(activityEvents.studentId, studentId));
+      await tx.delete(tutorInteractions).where(eq(tutorInteractions.studentId, studentId));
+      await tx.delete(users).where(and(eq(users.id, studentId), eq(users.role, "student")));
+    });
     await recordAudit({
       actor: user,
       action: "students.delete",

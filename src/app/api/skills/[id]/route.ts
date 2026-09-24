@@ -44,13 +44,15 @@ export async function DELETE(request: Request, { params }: Params) {
     const skillId = parseId(id);
     const questionRows = await db.select({ id: questions.id }).from(questions).where(eq(questions.skillId, skillId));
     const questionIds = questionRows.map((row) => row.id);
-    if (questionIds.length) {
-      await db.delete(assessmentItems).where(inArray(assessmentItems.questionId, questionIds));
-      await db.delete(questions).where(inArray(questions.id, questionIds));
-    }
-    await db.delete(masteryStates).where(eq(masteryStates.skillId, skillId));
-    await db.delete(pathMilestones).where(eq(pathMilestones.skillId, skillId));
-    await db.delete(skills).where(eq(skills.id, skillId));
+    await db.transaction(async (tx) => {
+      if (questionIds.length) {
+        await tx.delete(assessmentItems).where(inArray(assessmentItems.questionId, questionIds));
+        await tx.delete(questions).where(inArray(questions.id, questionIds));
+      }
+      await tx.delete(masteryStates).where(eq(masteryStates.skillId, skillId));
+      await tx.delete(pathMilestones).where(eq(pathMilestones.skillId, skillId));
+      await tx.delete(skills).where(eq(skills.id, skillId));
+    });
     await recordAudit({ actor: user, action: "skills.delete", resource: "skills", resourceId: skillId, ip });
     invalidate(CACHE_KEYS.skillCatalog);
     return ok({ deleted: true });
