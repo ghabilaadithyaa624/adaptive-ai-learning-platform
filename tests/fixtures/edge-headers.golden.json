@@ -1,0 +1,57 @@
+{
+  "development": {
+    "status": 200,
+    "csp": "default-src 'self'; script-src 'self' 'nonce-<N>' 'strict-dynamic' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'",
+    "headers": {
+      "content-security-policy": "default-src 'self'; script-src 'self' 'nonce-<N>' 'strict-dynamic' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'",
+      "x-middleware-next": "1",
+      "x-middleware-override-headers": "content-security-policy,host,x-nonce",
+      "x-middleware-request-content-security-policy": "default-src 'self'; script-src 'self' 'nonce-<N>' 'strict-dynamic' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'",
+      "x-middleware-request-host": "localhost:3000",
+      "x-middleware-request-x-nonce": "<N>"
+    }
+  },
+  "production": {
+    "status": 200,
+    "csp": "default-src 'self'; script-src 'self' 'nonce-<N>' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'; upgrade-insecure-requests",
+    "headers": {
+      "content-security-policy": "default-src 'self'; script-src 'self' 'nonce-<N>' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'; upgrade-insecure-requests",
+      "x-middleware-next": "1",
+      "x-middleware-override-headers": "content-security-policy,host,x-nonce",
+      "x-middleware-request-content-security-policy": "default-src 'self'; script-src 'self' 'nonce-<N>' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'; upgrade-insecure-requests",
+      "x-middleware-request-host": "localhost:3000",
+      "x-middleware-request-x-nonce": "<N>"
+    }
+  },
+  "apiRoute": {
+    "status": 200,
+    "csp": "default-src 'self'; script-src 'self' 'nonce-<N>' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'; upgrade-insecure-requests",
+    "headers": {
+      "content-security-policy": "default-src 'self'; script-src 'self' 'nonce-<N>' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'; upgrade-insecure-requests",
+      "x-middleware-next": "1",
+      "x-middleware-override-headers": "content-security-policy,host,x-nonce",
+      "x-middleware-request-content-security-policy": "default-src 'self'; script-src 'self' 'nonce-<N>' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'; upgrade-insecure-requests",
+      "x-middleware-request-host": "localhost:3000",
+      "x-middleware-request-x-nonce": "<N>"
+    }
+  },
+  "login": {
+    "status": 200,
+    "csp": "default-src 'self'; script-src 'self' 'nonce-<N>' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'; upgrade-insecure-requests",
+    "headers": {
+      "content-security-policy": "default-src 'self'; script-src 'self' 'nonce-<N>' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'; upgrade-insecure-requests",
+      "x-middleware-next": "1",
+      "x-middleware-override-headers": "content-security-policy,host,x-nonce",
+      "x-middleware-request-content-security-policy": "default-src 'self'; script-src 'self' 'nonce-<N>' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self'; upgrade-insecure-requests",
+      "x-middleware-request-host": "localhost:3000",
+      "x-middleware-request-x-nonce": "<N>"
+    }
+  },
+  "config": {
+    "matcher": [
+      {
+        "source": "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"
+      }
+    ]
+  }
+}
