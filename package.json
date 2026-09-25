@@ -21,7 +21,8 @@
     "test:all": "vitest run",
     "test:coverage": "vitest run --coverage",
     "bench": "vitest run tests/unit/benchmark.test.ts",
-    "bench:tune": "tsx benchmarks/tune.ts"
+    "bench:tune": "tsx benchmarks/tune.ts",
+    "bench:bkt": "tsx benchmarks/bkt-calibrate.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.45.3",

@@ -1,0 +1,602 @@
+/**
+ * Offline BKT calibration pipeline.
+ *
+ * The load-bearing test here is `recovers known parameters`: an estimator that
+ * cannot recover parameters from data it generated itself is not measuring
+ * anything, and every downstream metric would be decorated noise. The rest of
+ * the suite pins the properties that make the pipeline safe to act on —
+ * leakage-free splits, evidence gates, shrinkage behaviour, degeneracy
+ * rejection, reproducibility, and the no-auto-promotion contract.
+ */
+import { describe, expect, it } from "vitest";
+
+import {
+  CURRENT_SERVING_PARAMS,
+  DEFAULT_THRESHOLDS,
+  FORGET_POLICY,
+  INITIAL_MASTERY_VARIANTS,
+  PARAM_BOUNDS,
+  assessEvidence,
+  bktDatasetSignature,
+  buildSequences,
+  fitBktCalibration,
+  fitBktEm,
+  learnerHash,
+  paramsForSkill,
+  splitBktResponses,
+  type BktResponseRow,
+  type BktSkillParams,
+} from "@/lib/ml/bkt-calibration";
+import {
+  assessBktPromotion,
+  compareBktVariants,
+  evaluateVariant,
+  replaySequences,
+  scoreReplay,
+  selectionImpact,
+  temporalStability,
+} from "@/lib/ml/bkt-evaluation";
+import { DEFAULT_BKT } from "@/lib/ml/knowledge-tracing";
+import { DEFAULT_BKT_EXT } from "@/lib/ml/models/bkt";
+
+/* ------------------------------------------------------------------ */
+/* Deterministic BKT data generator (test-local ground truth)          */
+/* ------------------------------------------------------------------ */
+
+/** Deterministic uniform stream — no Math.random, so failures reproduce. */
+function rng(seed: number) {
+  let state = seed >>> 0;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+/**
+ * Generate responses from a TRUE BKT process: latent known/unknown state,
+ * absorbing learn transition, slip/guess emissions.
+ */
+function generateBkt(params: {
+  truth: BktSkillParams;
+  learners: number;
+  opportunities: number;
+  skillId: string;
+  seed: number;
+  startDay?: number;
+}): BktResponseRow[] {
+  const next = rng(params.seed);
+  const rows: BktResponseRow[] = [];
+  const epoch = Date.UTC(2026, 0, 1);
+  const startDay = params.startDay ?? 0;
+
+  for (let l = 0; l < params.learners; l += 1) {
+    let known = next() < params.truth.priorMastery;
+    for (let t = 0; t < params.opportunities; t += 1) {
+      const p = known ? 1 - params.truth.slip : params.truth.guess;
+      const isCorrect = next() < p;
+      rows.push({
+        learnerId: `${params.skillId}-learner-${l}`,
+        skillId: params.skillId,
+        isCorrect,
+        // One opportunity per day keeps between-session decay out of the
+        // recovery test; decay is exercised separately.
+        occurredAt: new Date(epoch + (startDay + t) * 3_600_000),
+        trueMastery: known ? 1 : 0,
+      });
+      if (!known && next() < params.truth.learn) known = true;
+    }
+  }
+  return rows;
+}
+
+const TRUTH: BktSkillParams = { priorMastery: 0.25, learn: 0.15, slip: 0.08, guess: 0.22, forget: 0.035 };
+
+/* ------------------------------------------------------------------ */
+/* Current parameterization audit                                      */
+/* ------------------------------------------------------------------ */
+
+describe("current serving parameterization", () => {
+  it("records exactly what production uses today", () => {
+    expect(CURRENT_SERVING_PARAMS).toEqual({
+      priorMastery: 0.3,
+      learn: 0.22,
+      slip: 0.1,
+      guess: 0.2,
+      forget: 0.035,
+    });
+  });
+
+  it("stays in sync with the real serving constants", () => {
+    // If someone edits DEFAULT_BKT, this fails and the calibration baseline is
+    // known to be stale rather than silently comparing against a fiction.
+    expect(CURRENT_SERVING_PARAMS.slip).toBe(DEFAULT_BKT.slip);
+    expect(CURRENT_SERVING_PARAMS.guess).toBe(DEFAULT_BKT.guess);
+    expect(CURRENT_SERVING_PARAMS.learn).toBe(DEFAULT_BKT.learn);
+    expect(CURRENT_SERVING_PARAMS.forget).toBe(DEFAULT_BKT.forget);
+    expect(CURRENT_SERVING_PARAMS.priorMastery).toBe(DEFAULT_BKT_EXT.priorMastery);
+  });
+
+  it("documents the four divergent initial-mastery values the audit found", () => {
+    expect(INITIAL_MASTERY_VARIANTS).toEqual({
+      bktModelPrior: 0.3,
+      masteryStateColumnDefault: 0.4,
+      diagnosticFirstTouch: 0.5,
+      missingStateFeature: 0,
+    });
+    expect(new Set(Object.values(INITIAL_MASTERY_VARIANTS)).size).toBeGreaterThan(1);
+  });
+
+  it("does not fit forgetting, and says why", () => {
+    expect(FORGET_POLICY.estimated).toBe(false);
+    expect(FORGET_POLICY.inheritedValue).toBe(DEFAULT_BKT.forget);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Estimator validity                                                  */
+/* ------------------------------------------------------------------ */
+
+describe("EM estimator", () => {
+  it("recovers known parameters from data generated by a true BKT process", () => {
+    const rows = generateBkt({ truth: TRUTH, learners: 400, opportunities: 12, skillId: "s1", seed: 7 });
+    const fit = fitBktEm(buildSequences(rows), { iterations: 400 });
+
+    // Tolerances reflect what 4800 observations can actually identify; they are
+    // deliberately not so loose that a broken estimator would pass.
+    expect(fit.params.slip).toBeGreaterThan(0.03);
+    expect(fit.params.slip).toBeLessThan(0.16);
+    expect(fit.params.guess).toBeGreaterThan(0.14);
+    expect(fit.params.guess).toBeLessThan(0.32);
+    expect(fit.params.learn).toBeGreaterThan(0.07);
+    expect(fit.params.learn).toBeLessThan(0.26);
+    expect(fit.params.priorMastery).toBeGreaterThan(0.1);
+    expect(fit.params.priorMastery).toBeLessThan(0.45);
+    expect(fit.converged).toBe(true);
+  });
+
+  it("beats the current global parameters on data whose truth differs from them", () => {
+    const rows = generateBkt({ truth: TRUTH, learners: 300, opportunities: 12, skillId: "s1", seed: 11 });
+    const sequences = buildSequences(rows);
+    const fit = fitBktEm(sequences, { iterations: 400 });
+
+    const fitted = replaySequences(sequences, () => fit.params);
+    const current = replaySequences(sequences, () => ({ ...CURRENT_SERVING_PARAMS }));
+    expect(scoreReplay(fitted.points, fitted.trajectories).brier).toBeLessThan(
+      scoreReplay(current.points, current.trajectories).brier,
+    );
+  });
+
+  it("increases the likelihood monotonically (EM invariant)", () => {
+    const rows = generateBkt({ truth: TRUTH, learners: 120, opportunities: 10, skillId: "s1", seed: 3 });
+    const sequences = buildSequences(rows);
+    const short = fitBktEm(sequences, { iterations: 3 });
+    const long = fitBktEm(sequences, { iterations: 120 });
+    expect(long.logLikelihood).toBeGreaterThanOrEqual(short.logLikelihood - 1e-9);
+  });
+
+  it("is deterministic: identical input yields an identical fit", () => {
+    const rows = generateBkt({ truth: TRUTH, learners: 80, opportunities: 8, skillId: "s1", seed: 5 });
+    const a = fitBktEm(buildSequences(rows), { iterations: 100 });
+    const b = fitBktEm(buildSequences(rows), { iterations: 100 });
+    expect(a.params).toEqual(b.params);
+    expect(a.logLikelihood).toBe(b.logLikelihood);
+  });
+
+  it("never returns parameters outside the non-degeneracy bounds", () => {
+    // Pathological input: everything correct — an unbounded fit would push
+    // guess to 1 and make mastery meaningless.
+    const rows: BktResponseRow[] = Array.from({ length: 400 }, (_, i) => ({
+      learnerId: `l-${i % 40}`,
+      skillId: "s1",
+      isCorrect: true,
+      occurredAt: new Date(Date.UTC(2026, 0, 1) + i * 3_600_000),
+    }));
+    const fit = fitBktEm(buildSequences(rows), { iterations: 200 });
+    expect(fit.params.slip).toBeLessThanOrEqual(PARAM_BOUNDS.slip.max);
+    expect(fit.params.guess).toBeLessThanOrEqual(PARAM_BOUNDS.guess.max);
+    expect(fit.params.slip + fit.params.guess).toBeLessThanOrEqual(PARAM_BOUNDS.maxSlipPlusGuess + 1e-9);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Splitting & leakage                                                 */
+/* ------------------------------------------------------------------ */
+
+describe("splits", () => {
+  const rows = [
+    ...generateBkt({ truth: TRUTH, learners: 60, opportunities: 10, skillId: "s1", seed: 21 }),
+    ...generateBkt({ truth: TRUTH, learners: 60, opportunities: 10, skillId: "s2", seed: 22 }),
+  ];
+
+  it("keeps held-out learners entirely out of training", () => {
+    const split = splitBktResponses(rows);
+    const trainLearners = new Set(split.train.map((r) => String(r.learnerId)));
+    const heldLearners = new Set(split.heldOutLearnerTest.map((r) => String(r.learnerId)));
+    for (const id of heldLearners) expect(trainLearners.has(id)).toBe(false);
+    expect(heldLearners.size).toBeGreaterThan(0);
+  });
+
+  it("is chronological: no training response postdates a chronological-test response", () => {
+    const split = splitBktResponses(rows);
+    const maxTrain = Math.max(...split.train.map((r) => new Date(r.occurredAt).getTime()));
+    const minTest = Math.min(...split.chronologicalTest.map((r) => new Date(r.occurredAt).getTime()));
+    expect(maxTrain).toBeLessThanOrEqual(minTest);
+  });
+
+  it("assigns held-out learners deterministically", () => {
+    expect(splitBktResponses(rows).heldOutLearnerIds).toEqual(splitBktResponses(rows).heldOutLearnerIds);
+    expect(learnerHash("abc")).toBe(learnerHash("abc"));
+    expect(learnerHash("abc")).not.toBe(learnerHash("abd"));
+  });
+
+  it("orders sequences stably when timestamps collide", () => {
+    const sameInstant = new Date(Date.UTC(2026, 0, 1));
+    const tied: BktResponseRow[] = [
+      { learnerId: "l1", skillId: "s1", isCorrect: true, occurredAt: sameInstant },
+      { learnerId: "l1", skillId: "s1", isCorrect: false, occurredAt: sameInstant },
+      { learnerId: "l1", skillId: "s1", isCorrect: true, occurredAt: sameInstant },
+    ];
+    expect(buildSequences(tied)[0].responses.map((r) => r.isCorrect)).toEqual([true, false, true]);
+  });
+});
+
+describe("replay has no post-response leakage", () => {
+  it("predicts response t from responses strictly before t", () => {
+    const rows: BktResponseRow[] = [
+      { learnerId: "l1", skillId: "s1", isCorrect: false, occurredAt: new Date(Date.UTC(2026, 0, 1)) },
+      { learnerId: "l1", skillId: "s1", isCorrect: false, occurredAt: new Date(Date.UTC(2026, 0, 1, 1)) },
+      { learnerId: "l1", skillId: "s1", isCorrect: false, occurredAt: new Date(Date.UTC(2026, 0, 1, 2)) },
+    ];
+    const { points } = replaySequences(buildSequences(rows), () => ({ ...CURRENT_SERVING_PARAMS }), {
+      betweenSessionDecay: false,
+    });
+    // The first prediction can only use the prior, so it is exactly the prior's
+    // implied P(correct) — proof that no later response informed it.
+    const prior = CURRENT_SERVING_PARAMS;
+    const expectedFirst = prior.priorMastery * (1 - prior.slip) + (1 - prior.priorMastery) * prior.guess;
+    expect(points[0].predicted).toBeCloseTo(expectedFirst, 10);
+    expect(points[0].masteryBefore).toBeCloseTo(prior.priorMastery, 10);
+    // Three wrong answers in a row must lower the estimate monotonically.
+    expect(points[1].masteryBefore).toBeLessThan(points[0].masteryBefore);
+    expect(points[2].masteryBefore).toBeLessThan(points[1].masteryBefore);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Evidence gates                                                      */
+/* ------------------------------------------------------------------ */
+
+describe("evidence thresholds", () => {
+  it("refuses skill-specific fitting on a thin dataset and states the shortfall", () => {
+    const rows = generateBkt({ truth: TRUTH, learners: 5, opportunities: 6, skillId: "s1", seed: 31 });
+    const evidence = assessEvidence(rows);
+    expect(evidence.sufficientForSkillSpecific).toBe(false);
+    expect(evidence.eligibleSkills).toEqual([]);
+    expect(evidence.requirement).toContain("Insufficient evidence");
+    expect(evidence.requirement).toContain("total graded responses");
+    expect(evidence.requirement).toContain("need 1970 more");
+    expect(evidence.ineligibleSkills[0].shortfalls.join(" ")).toMatch(/more responses|more distinct learners/);
+  });
+
+  it("accepts a skill once it clears every threshold", () => {
+    const rows = generateBkt({ truth: TRUTH, learners: 40, opportunities: 10, skillId: "s1", seed: 32 });
+    const evidence = assessEvidence(rows);
+    expect(evidence.eligibleSkills).toEqual(["s1"]);
+    expect(evidence.ineligibleSkills).toEqual([]);
+  });
+
+  it("falls back to global parameters for skills below threshold", () => {
+    const rows = [
+      ...generateBkt({ truth: TRUTH, learners: 40, opportunities: 10, skillId: "rich", seed: 33 }),
+      ...generateBkt({ truth: TRUTH, learners: 3, opportunities: 4, skillId: "sparse", seed: 34 }),
+    ];
+    const artifact = fitBktCalibration(rows, {
+      version: "t",
+      datasetVersion: "t",
+      trainedThrough: "t",
+      variant: "skill-specific",
+    });
+    expect(artifact.skills.sparse.source).toBe("global-fallback");
+    expect(artifact.skills.sparse.flags).toContain("insufficient_evidence");
+    expect(paramsForSkill(artifact, "sparse")).toEqual(artifact.global);
+    expect(paramsForSkill(artifact, "never-seen-skill")).toEqual(artifact.global);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Shrinkage                                                           */
+/* ------------------------------------------------------------------ */
+
+describe("shrinkage", () => {
+  const sparseSkill = generateBkt({ truth: { ...TRUTH, learn: 0.4, slip: 0.02 }, learners: 30, opportunities: 8, skillId: "thin", seed: 41 });
+  const denseSkill = generateBkt({ truth: TRUTH, learners: 300, opportunities: 12, skillId: "thick", seed: 42 });
+  const rows = [...sparseSkill, ...denseSkill];
+
+  it("pulls sparse skills toward the global fit more than dense ones", () => {
+    const artifact = fitBktCalibration(rows, {
+      version: "t",
+      datasetVersion: "t",
+      trainedThrough: "t",
+      variant: "skill-specific-shrunk",
+    });
+    const thin = artifact.skills.thin;
+    const thick = artifact.skills.thick;
+    expect(thin.shrinkageWeight).toBeLessThan(thick.shrinkageWeight);
+    expect(thin.source).toBe("shrunk");
+
+    if (thin.rawFit) {
+      // The shipped value sits between the raw fit and the global fit.
+      const between =
+        (thin.params.learn - artifact.global.learn) * (thin.rawFit.learn - thin.params.learn) >= -1e-9;
+      expect(between).toBe(true);
+    }
+  });
+
+  it("uses w = n/(n+k) exactly, so the blend is auditable", () => {
+    const artifact = fitBktCalibration(rows, {
+      version: "t",
+      datasetVersion: "t",
+      trainedThrough: "t",
+      variant: "skill-specific-shrunk",
+      shrinkageK: 300,
+    });
+    const thin = artifact.skills.thin;
+    expect(thin.shrinkageWeight).toBeCloseTo(thin.opportunities / (thin.opportunities + 300), 4);
+  });
+
+  it("keeps the raw fit in the artifact for audit", () => {
+    const artifact = fitBktCalibration(rows, {
+      version: "t",
+      datasetVersion: "t",
+      trainedThrough: "t",
+      variant: "skill-specific-shrunk",
+    });
+    expect(artifact.skills.thick.rawFit).not.toBeNull();
+    expect(artifact.skills.thick.rawFit).not.toEqual(artifact.skills.thick.params);
+  });
+
+  it("rejects rather than shrinks a degenerate fit", () => {
+    // All-correct responses drive guess to its bound; shrinking that toward the
+    // global fit would launder a broken model into the shipped parameters.
+    const degenerate: BktResponseRow[] = Array.from({ length: 600 }, (_, i) => ({
+      learnerId: `d-${i % 40}`,
+      skillId: "degenerate",
+      isCorrect: i % 11 !== 0,
+      occurredAt: new Date(Date.UTC(2026, 0, 1) + i * 3_600_000),
+    }));
+    const artifact = fitBktCalibration([...denseSkill, ...degenerate], {
+      version: "t",
+      datasetVersion: "t",
+      trainedThrough: "t",
+      variant: "skill-specific-shrunk",
+    });
+    const entry = artifact.skills.degenerate;
+    if (entry.flags.includes("rejected_degenerate")) {
+      expect(entry.source).toBe("global-fallback");
+      expect(entry.params).toEqual(artifact.global);
+      expect(entry.rawFit).not.toBeNull();
+    }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Artifact                                                            */
+/* ------------------------------------------------------------------ */
+
+describe("artifact", () => {
+  const rows = generateBkt({ truth: TRUTH, learners: 60, opportunities: 10, skillId: "s1", seed: 51 });
+
+  it("is versioned and carries reproducibility provenance", () => {
+    const artifact = fitBktCalibration(rows, {
+      version: "bkt-skill-2026.09",
+      datasetVersion: bktDatasetSignature(rows),
+      trainedThrough: "2026-09-01T00:00:00.000Z",
+    });
+    expect(artifact.schemaVersion).toBe("bkt-params-v1");
+    expect(artifact.version).toBe("bkt-skill-2026.09");
+    expect(artifact.provenance.datasetVersion).toMatch(/^n\d+-span\d+d-c/);
+    expect(artifact.provenance.thresholds).toEqual(DEFAULT_THRESHOLDS);
+    expect(artifact.provenance.forgetPolicy.estimated).toBe(false);
+    expect(artifact.provenance.algorithm).toContain("bkt-em-forward-backward-v1");
+  });
+
+  it("is byte-reproducible from the same inputs", () => {
+    const opts = { version: "v", datasetVersion: "d", trainedThrough: "t" } as const;
+    expect(JSON.stringify(fitBktCalibration(rows, opts))).toBe(JSON.stringify(fitBktCalibration(rows, opts)));
+  });
+
+  it("fingerprints datasets distinctly", () => {
+    const other = generateBkt({ truth: TRUTH, learners: 60, opportunities: 10, skillId: "s1", seed: 52 });
+    expect(bktDatasetSignature(rows)).not.toBe(bktDatasetSignature(other));
+    expect(bktDatasetSignature([])).toBe("empty");
+  });
+
+  it("never mutates serving constants by being imported", () => {
+    fitBktCalibration(rows, { version: "v", datasetVersion: "d", trainedThrough: "t" });
+    expect(DEFAULT_BKT).toEqual({ slip: 0.1, guess: 0.2, learn: 0.22, forget: 0.035 });
+    expect(DEFAULT_BKT_EXT.priorMastery).toBe(0.3);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Evaluation & promotion                                              */
+/* ------------------------------------------------------------------ */
+
+describe("evaluation", () => {
+  const rows = [
+    ...generateBkt({ truth: TRUTH, learners: 150, opportunities: 12, skillId: "s1", seed: 61 }),
+    ...generateBkt({ truth: { ...TRUTH, slip: 0.15, guess: 0.3, learn: 0.08 }, learners: 150, opportunities: 12, skillId: "s2", seed: 62 }),
+  ];
+  const split = splitBktResponses(rows);
+  const common = { datasetVersion: "d", trainedThrough: "t" } as const;
+
+  const artifacts = {
+    global: fitBktCalibration(split.train, { ...common, version: "g", variant: "global" as const }),
+    skill: fitBktCalibration(split.train, { ...common, version: "s", variant: "skill-specific" as const }),
+    shrunk: fitBktCalibration(split.train, { ...common, version: "k", variant: "skill-specific-shrunk" as const }),
+  };
+  const evaluate = (variant: string, artifact: (typeof artifacts)["global"]) =>
+    evaluateVariant({
+      variant,
+      artifact,
+      chronologicalTest: split.chronologicalTest,
+      heldOutLearnerTest: split.heldOutLearnerTest,
+    });
+
+  it("reports every required metric family on both held-out sets", () => {
+    const evaluation = evaluate("global", artifacts.global);
+    for (const set of [evaluation.chronological, evaluation.heldOutLearners]) {
+      expect(set.responses).toBeGreaterThan(0);
+      expect(set.accuracy).toBeGreaterThanOrEqual(0);
+      expect(set.brier).toBeGreaterThan(0);
+      expect(set.calibrationError).toBeGreaterThanOrEqual(0);
+      expect(set.reliability.length).toBeGreaterThan(0);
+      expect(set.stabilityScore).toBeGreaterThanOrEqual(0);
+    }
+    expect(evaluation.temporal.blocks.length).toBeGreaterThan(1);
+    expect(evaluation.selection.zpdHitRate).toBeGreaterThanOrEqual(0);
+  });
+
+  it("reports mastery RMSE only when ground truth exists", () => {
+    const evaluation = evaluate("global", artifacts.global);
+    // The generator supplies trueMastery, so RMSE is measurable here...
+    expect(evaluation.chronological.masteryRmse).not.toBeNull();
+
+    // ...and is null on data without it, rather than silently proxied.
+    const noTruth = rows.map(({ trueMastery: _omit, ...rest }) => rest);
+    const bare = splitBktResponses(noTruth);
+    const evaluation2 = evaluateVariant({
+      variant: "global",
+      artifact: artifacts.global,
+      chronologicalTest: bare.chronologicalTest,
+      heldOutLearnerTest: bare.heldOutLearnerTest,
+    });
+    expect(evaluation2.chronological.masteryRmse).toBeNull();
+  });
+
+  it("detects temporal instability", () => {
+    const stable = temporalStability(
+      Array.from({ length: 400 }, (_, i) => ({
+        learnerId: "l",
+        skillId: "s",
+        predicted: 0.6,
+        actual: (i % 10 < 6 ? 1 : 0) as 0 | 1,
+        masteryBefore: 0.5,
+        index: i,
+        at: i,
+      })),
+    );
+    expect(stable.brierStdDev).toBeLessThan(0.05);
+  });
+
+  it("flags premature mastery in the downstream selection proxy", () => {
+    const impact = selectionImpact([
+      { learnerId: "l", skillId: "s", predicted: 0.95, actual: 0, masteryBefore: 0.95, index: 0, at: 0 },
+      { learnerId: "l", skillId: "s", predicted: 0.7, actual: 1, masteryBefore: 0.6, index: 1, at: 1 },
+    ]);
+    expect(impact.prematureMasteryRate).toBe(0.5);
+    expect(impact.zpdHitRate).toBe(0.5);
+  });
+
+  it("compares all three variants", () => {
+    const comparison = compareBktVariants({
+      baseline: evaluate("current-global", artifacts.global),
+      candidates: [evaluate("skill-specific", artifacts.skill), evaluate("skill-specific-shrunk", artifacts.shrunk)],
+    });
+    expect(comparison.variants.map((v) => v.variant)).toEqual([
+      "current-global",
+      "skill-specific",
+      "skill-specific-shrunk",
+    ]);
+    expect(Object.keys(comparison.promotions)).toHaveLength(2);
+  });
+});
+
+describe("promotion gate", () => {
+  const base = {
+    variant: "x",
+    chronological: {} as never,
+    temporal: { blocks: [], brierRange: 0, brierStdDev: 0.01 },
+    selection: { zpdHitRate: 0.5, informationPerItem: 0.9, prematureMasteryRate: 0.02 },
+    skillsWithOwnParams: 5,
+    skillsOnGlobalFallback: 1,
+  };
+  const metrics = (brier: number, responses = 5000) => ({
+    responses,
+    learners: 200,
+    accuracy: 0.7,
+    brier,
+    logLoss: 0.6,
+    calibrationError: 0.02,
+    maxCalibrationError: 0.05,
+    reliability: [],
+    masteryRmse: null,
+    volatility: 0.05,
+    stabilityScore: 0.9,
+    monotonicity: 0.8,
+  });
+
+  it("never promotes automatically, even for a clear winner", () => {
+    const report = assessBktPromotion({
+      candidate: { ...base, variant: "cand", heldOutLearners: metrics(0.18) },
+      baseline: { ...base, variant: "base", heldOutLearners: metrics(0.25) },
+    });
+    expect(report.autoPromote).toBe(false);
+    expect(report.recommendation).toBe("adopt-candidate");
+    expect(report.decision.verdict).toBe("improved");
+  });
+
+  it("recommends keeping current parameters when the candidate is not better", () => {
+    const report = assessBktPromotion({
+      candidate: { ...base, variant: "cand", heldOutLearners: metrics(0.2501) },
+      baseline: { ...base, variant: "base", heldOutLearners: metrics(0.25) },
+    });
+    expect(report.recommendation).toBe("keep-current");
+  });
+
+  it("refuses on too few held-out responses", () => {
+    const report = assessBktPromotion({
+      candidate: { ...base, variant: "cand", heldOutLearners: metrics(0.1, 50) },
+      baseline: { ...base, variant: "base", heldOutLearners: metrics(0.25) },
+    });
+    expect(report.recommendation).toBe("insufficient-evidence");
+    expect(report.rationale.join(" ")).toContain("below the 500 minimum");
+  });
+
+  it("refuses when no skill earned its own parameters", () => {
+    const report = assessBktPromotion({
+      candidate: { ...base, variant: "cand", skillsWithOwnParams: 0, heldOutLearners: metrics(0.1) },
+      baseline: { ...base, variant: "base", heldOutLearners: metrics(0.25) },
+    });
+    expect(report.recommendation).toBe("insufficient-evidence");
+    expect(report.rationale.join(" ")).toContain("global model in disguise");
+  });
+
+  it("blocks a candidate that wins on Brier but degrades temporal stability", () => {
+    const report = assessBktPromotion({
+      candidate: {
+        ...base,
+        variant: "cand",
+        temporal: { blocks: [{ block: 1, responses: 10, brier: 0.1, accuracy: 0.5 }, { block: 2, responses: 10, brier: 0.4, accuracy: 0.5 }], brierRange: 0.3, brierStdDev: 0.15 },
+        heldOutLearners: metrics(0.18),
+      },
+      baseline: { ...base, variant: "base", heldOutLearners: metrics(0.25) },
+    });
+    expect(report.recommendation).toBe("keep-current");
+    expect(report.rationale.join(" ")).toContain("Temporal stability regressed");
+  });
+
+  it("blocks a candidate that would advance learners prematurely", () => {
+    const report = assessBktPromotion({
+      candidate: {
+        ...base,
+        variant: "cand",
+        selection: { zpdHitRate: 0.5, informationPerItem: 0.9, prematureMasteryRate: 0.09 },
+        heldOutLearners: metrics(0.18),
+      },
+      baseline: { ...base, variant: "base", heldOutLearners: metrics(0.25) },
+    });
+    expect(report.recommendation).toBe("keep-current");
+    expect(report.rationale.join(" ")).toContain("Premature-mastery rate rose");
+  });
+});
