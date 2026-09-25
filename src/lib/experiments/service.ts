@@ -31,6 +31,16 @@ import {
   skills,
   users,
 } from "@/db/schema";
+import {
+  ELIGIBILITY_BOUNDARY,
+  ELIGIBILITY_SNAPSHOT_BOUNDARY,
+  VARIANTS_BOUNDARY,
+  parseEligibilityRule,
+  parseEligibilitySnapshot,
+  parseExperimentVariants,
+  serializeEligibilitySnapshot,
+  unwrapOrThrow,
+} from "@/lib/persistence";
 import { resolveAssignment, type AssignmentContext } from "./assignment";
 import { effectiveStatus, withFingerprint } from "./lifecycle";
 import type {
@@ -79,7 +89,18 @@ function tenantFilter(scope: TenantScope) {
 
 type ExperimentRow = typeof experiments.$inferSelect;
 
+/**
+ * Map a database row to the domain object.
+ *
+ * `variants` and `eligibility` are JSONB and are *parsed*, not cast: an
+ * experiment whose arms cannot be read has no safe interpretation — serving a
+ * default policy while recording an exposure against a treatment arm would
+ * corrupt the experiment's results with no error anywhere. So a malformed row
+ * throws a structured `PersistedDataError` and the read fails loudly.
+ */
 function toDomain(row: ExperimentRow): Experiment {
+  const variants = unwrapOrThrow(parseExperimentVariants(row.variants ?? []), VARIANTS_BOUNDARY);
+  const eligibility = unwrapOrThrow(parseEligibilityRule(row.eligibility), ELIGIBILITY_BOUNDARY);
   return {
     id: row.id,
     key: row.key,
@@ -87,8 +108,8 @@ function toDomain(row: ExperimentRow): Experiment {
     hypothesis: row.hypothesis,
     institutionId: row.institutionId,
     status: row.status as ExperimentStatus,
-    variants: (row.variants as unknown as ExperimentVariant[]) ?? [],
-    eligibility: (row.eligibility as Experiment["eligibility"]) ?? {},
+    variants,
+    eligibility,
     primaryMetric: row.primaryMetric as PrimaryMetricKey,
     secondaryMetrics: (row.secondaryMetrics as SecondaryMetricKey[]) ?? [],
     assignmentStrategy: row.assignmentStrategy === "rolling" ? "rolling" : "sticky",
@@ -226,8 +247,12 @@ export async function assignLearner(params: {
         variantKey: existingRows[0].variantKey,
         configFingerprint: existingRows[0].configFingerprint,
         bucket: existingRows[0].bucket,
-        eligibilitySnapshot: existingRows[0]
-          .eligibilitySnapshot as unknown as LearnerEligibilitySnapshot,
+        // A persisted assignment whose snapshot is unreadable cannot be used:
+        // its population membership is exactly what the snapshot proves.
+        eligibilitySnapshot: unwrapOrThrow(
+          parseEligibilitySnapshot(existingRows[0].eligibilitySnapshot),
+          ELIGIBILITY_SNAPSHOT_BOUNDARY,
+        ),
         assignedAt: existingRows[0].assignedAt,
       }
     : null;
@@ -252,7 +277,7 @@ export async function assignLearner(params: {
         variantKey: decision.variantKey!,
         configFingerprint: decision.config.fingerprint,
         bucket: decision.bucket,
-        eligibilitySnapshot: learner as unknown as Record<string, unknown>,
+        eligibilitySnapshot: serializeEligibilitySnapshot(learner),
         assignedAt: now,
       })
       .onConflictDoNothing({

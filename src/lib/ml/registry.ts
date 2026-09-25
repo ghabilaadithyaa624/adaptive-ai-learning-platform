@@ -21,6 +21,14 @@ import { bayesianModel } from "./models/bayesian";
 import { mean } from "@/lib/utils";
 import { BLOOM_TO_VALUE, DIFFICULTY_TO_VALUE } from "@/lib/questions/constants";
 import { cached, invalidate, CACHE_KEYS, CACHE_TTL } from "@/lib/cache";
+import {
+  CLASSIFIER_PARAMS_BOUNDARY,
+  CLASSIFIER_PARAMS_V1,
+  parseClassifierParams,
+  parseModelMetrics,
+  unwrapOrFallback,
+  type PersistedClassifierParams,
+} from "@/lib/persistence";
 
 export const CLASSIFIER_NAME = "difficulty-classifier";
 export const TRACER_NAME = "bkt-knowledge-tracer";
@@ -57,31 +65,38 @@ async function loadClassifierUncached(): Promise<ClassifierModel> {
     const rows = await db.select().from(mlModels).where(eq(mlModels.name, CLASSIFIER_NAME)).limit(1);
     const row = rows[0];
     if (!row) return HEURISTIC_MODEL;
-    const params = row.params as unknown as Partial<ClassifierModel>;
-    if (!params?.weights?.length) return HEURISTIC_MODEL;
+
+    // The stored parameters drive every served probability, so they are parsed
+    // — not cast — before use. A malformed or unreadable payload degrades to
+    // the heuristic model, which is a known-good configuration, and the
+    // rejection is logged and counted so the degradation is visible rather than
+    // inferred from a mysterious accuracy drop.
+    const params = unwrapOrFallback<PersistedClassifierParams | null>(
+      parseClassifierParams(row.params),
+      CLASSIFIER_PARAMS_BOUNDARY,
+      null,
+    );
+    if (!params) return HEURISTIC_MODEL;
+
+    const metrics = unwrapOrFallback(
+      parseModelMetrics(row.metrics, "ml_models.metrics:classifier"),
+      "ml_models.metrics:classifier",
+      // Metrics are reporting-only: an unreadable bag must not cost us a usable
+      // model, so it degrades to zeroes while the model itself still serves.
+      { ...HEURISTIC_MODEL.metrics },
+    );
+
     return {
       name: CLASSIFIER_NAME,
       version: row.version,
-      featureNames: params.featureNames ?? HEURISTIC_MODEL.featureNames,
+      featureNames: params.featureNames,
       weights: params.weights,
-      means: params.means ?? [],
-      stds: params.stds ?? [],
+      means: params.means,
+      stds: params.stds,
       samples: row.samples,
       trainedAt: row.trainedAt.toISOString(),
-      calibration: params.calibration as ClassifierModel["calibration"],
-      metrics: {
-        accuracy: row.metrics.accuracy ?? 0,
-        logLoss: row.metrics.logLoss ?? 0,
-        auc: row.metrics.auc ?? 0,
-        brier: row.metrics.brier ?? 0,
-        precision: row.metrics.precision ?? 0,
-        recall: row.metrics.recall ?? 0,
-        testSize: row.metrics.testSize ?? 0,
-        f1: row.metrics.f1 ?? 0,
-        prAuc: row.metrics.prAuc ?? 0,
-        ece: row.metrics.ece ?? 0,
-        mce: row.metrics.mce ?? 0,
-      },
+      calibration: params.calibration,
+      metrics,
     };
   } catch {
     return HEURISTIC_MODEL;
@@ -103,6 +118,10 @@ export async function saveClassifier(
     datasetVersion: provenance.datasetVersion ?? null,
     featureVersion: FEATURE_VERSION,
     params: {
+      // Stamp the payload schema version on write: reads accept unstamped
+      // legacy rows, but anything written from here on is self-describing so a
+      // future shape change is detected instead of misread.
+      schemaVersion: CLASSIFIER_PARAMS_V1,
       featureNames: model.featureNames,
       weights: model.weights,
       means: model.means,

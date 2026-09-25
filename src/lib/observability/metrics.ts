@@ -284,6 +284,22 @@ export const metrics = {
     new Counter("adaptiq_auth_events_total", "Authentication events.", ["action", "outcome"]),
   ),
 
+  // ---- Persistence boundaries (JSONB runtime validation) ----
+  persistedPayloadReadsTotal: registry.register(
+    new Counter(
+      "adaptiq_persisted_payload_reads_total",
+      "Persisted JSON payloads parsed at a database boundary, by parse outcome.",
+      ["boundary", "status"],
+    ),
+  ),
+  persistedPayloadRejectionsTotal: registry.register(
+    new Counter(
+      "adaptiq_persisted_payload_rejections_total",
+      "Persisted JSON payloads rejected as malformed or unsupported.",
+      ["boundary", "status", "code"],
+    ),
+  ),
+
   // ---- Errors ----
   appErrorsTotal: registry.register(
     new Counter("adaptiq_app_errors_total", "Application-level errors.", ["type"]),
