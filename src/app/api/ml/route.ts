@@ -5,7 +5,8 @@ import { ok, toNumber, withAuth } from "@/lib/api";
 import { loadSkillFeatures } from "@/lib/engine";
 import { labelPrediction, predictProbability } from "@/lib/ml/classifier";
 import { evaluateClassification } from "@/lib/ml/evaluation";
-import { loadClassifier, trainAndPersistClassifier } from "@/lib/ml/registry";
+import { CLASSIFIER_NAME, loadClassifier, trainAndPersistClassifier } from "@/lib/ml/registry";
+import { getModelServingStatus } from "@/lib/ml/model-fallback";
 import { getModelEvaluations, getModelRegistry } from "@/lib/queries";
 import { round } from "@/lib/utils";
 import { badRequest } from "@/lib/http";
@@ -27,7 +28,27 @@ export async function GET(request: Request) {
       getModelRegistry(),
       db.select({ total: sql<number>`count(*)::int` }).from(assessmentItems),
     ]);
-    return ok({ models, trainingSamples: Number(sampleRows[0]?.total ?? 0) });
+    // Touch the load path so the reported serving state reflects a real load
+    // rather than whatever this process happened to do earlier (or nothing at
+    // all, on a replica that has served no predictions yet).
+    const active = await loadClassifier();
+    return ok({
+      models,
+      trainingSamples: Number(sampleRows[0]?.total ?? 0),
+      // Operator answer to "is production on a fallback model right now?".
+      // Purely operational fields — no learner data.
+      serving: getModelServingStatus(CLASSIFIER_NAME) ?? {
+        model: CLASSIFIER_NAME,
+        source: "registry" as const,
+        servingVersion: active.version,
+        attemptedVersion: null,
+        category: null,
+        since: null,
+        consecutiveFailures: 0,
+        suppressedWarnings: 0,
+        lastEventAt: new Date().toISOString(),
+      },
+    });
   });
 }
 

@@ -22,13 +22,20 @@ import { mean } from "@/lib/utils";
 import { BLOOM_TO_VALUE, DIFFICULTY_TO_VALUE } from "@/lib/questions/constants";
 import { cached, invalidate, CACHE_KEYS, CACHE_TTL } from "@/lib/cache";
 import {
+  PersistedDataError,
+  reportParse,
   CLASSIFIER_PARAMS_BOUNDARY,
   CLASSIFIER_PARAMS_V1,
   parseClassifierParams,
   parseModelMetrics,
   unwrapOrFallback,
-  type PersistedClassifierParams,
 } from "@/lib/persistence";
+import {
+  recordModelFallback,
+  recordModelLoaded,
+  safeFailureContext,
+  type FallbackCategory,
+} from "./model-fallback";
 
 export const CLASSIFIER_NAME = "difficulty-classifier";
 export const TRACER_NAME = "bkt-knowledge-tracer";
@@ -57,36 +64,77 @@ export function datasetSignature(rows: { createdAt: Date | string; y: number }[]
  * per-student data (the model is global, not student-specific).
  */
 export async function loadClassifier(): Promise<ClassifierModel> {
-  return cached(CACHE_KEYS.classifier, CACHE_TTL.model, loadClassifierUncached);
+  return cached(
+    CACHE_KEYS.classifier,
+    // A degraded load is cached only briefly: pinning a fallback for the full
+    // model TTL would keep serving the heuristic for minutes after a transient
+    // database blip cleared, while not caching it at all would turn an outage
+    // into a query storm on the hot assessment path.
+    (model: ClassifierModel) => (model === HEURISTIC_MODEL ? CACHE_TTL.modelDegraded : CACHE_TTL.model),
+    loadClassifierUncached,
+  );
 }
 
+/**
+ * Load the registered classifier, or fall back to the heuristic.
+ *
+ * The fallback is intentional and unconditional — availability of the
+ * assessment path beats fidelity of the model, and the heuristic is a
+ * known-good configuration. Every fallback branch below is explicitly
+ * categorised and reported so the degradation is visible in metrics, logs and
+ * the health endpoint instead of being silently absorbed.
+ */
 async function loadClassifierUncached(): Promise<ClassifierModel> {
+  let attemptedVersion: string | null = null;
+
+  const fallback = (category: FallbackCategory, context?: Record<string, string | number | boolean>) => {
+    recordModelFallback({
+      model: CLASSIFIER_NAME,
+      category,
+      attemptedVersion,
+      servingVersion: HEURISTIC_MODEL.version,
+      context,
+    });
+    return HEURISTIC_MODEL;
+  };
+
   try {
     const rows = await db.select().from(mlModels).where(eq(mlModels.name, CLASSIFIER_NAME)).limit(1);
     const row = rows[0];
-    if (!row) return HEURISTIC_MODEL;
+    // Not an error: before the first training run there is legitimately no
+    // registered model. It is still a fallback — traffic is served by the
+    // heuristic — so it is counted, under its own category so alerting can
+    // ignore a fresh install while still catching a model that vanished.
+    if (!row) return fallback("no_registered_model");
+
+    attemptedVersion = row.version;
 
     // The stored parameters drive every served probability, so they are parsed
-    // — not cast — before use. A malformed or unreadable payload degrades to
-    // the heuristic model, which is a known-good configuration, and the
-    // rejection is logged and counted so the degradation is visible rather than
-    // inferred from a mysterious accuracy drop.
-    const params = unwrapOrFallback<PersistedClassifierParams | null>(
-      parseClassifierParams(row.params),
-      CLASSIFIER_PARAMS_BOUNDARY,
-      null,
-    );
-    if (!params) return HEURISTIC_MODEL;
+    // — not cast — before use. The parse status is inspected directly here (in
+    // preference to `unwrapOrFallback`) so a corrupt payload and a payload from
+    // an unsupported schema version are reported as distinct categories: one is
+    // a data-integrity incident, the other is a rollback to fix by deploying.
+    const parsed = reportParse(parseClassifierParams(row.params), CLASSIFIER_PARAMS_BOUNDARY);
+    if (parsed.status !== "VALID") {
+      return fallback(parsed.status === "UNSUPPORTED_VERSION" ? "unsupported_version" : "malformed_params", {
+        // Structural location only — never the offending value.
+        path: parsed.issue.path,
+        reason: parsed.issue.code,
+      });
+    }
+    const params = parsed.value;
 
-    const metrics = unwrapOrFallback(
+    const metricsBag = unwrapOrFallback(
       parseModelMetrics(row.metrics, "ml_models.metrics:classifier"),
       "ml_models.metrics:classifier",
       // Metrics are reporting-only: an unreadable bag must not cost us a usable
-      // model, so it degrades to zeroes while the model itself still serves.
+      // model, so it degrades to zeroes while the trained model still serves.
+      // That is a partial degradation, not a model fallback, and is therefore
+      // not counted as one.
       { ...HEURISTIC_MODEL.metrics },
     );
 
-    return {
+    const model: ClassifierModel = {
       name: CLASSIFIER_NAME,
       version: row.version,
       featureNames: params.featureNames,
@@ -96,10 +144,18 @@ async function loadClassifierUncached(): Promise<ClassifierModel> {
       samples: row.samples,
       trainedAt: row.trainedAt.toISOString(),
       calibration: params.calibration,
-      metrics,
+      metrics: metricsBag,
     };
-  } catch {
-    return HEURISTIC_MODEL;
+    recordModelLoaded({ model: CLASSIFIER_NAME, version: model.version });
+    return model;
+  } catch (error) {
+    // Previously `catch { return HEURISTIC_MODEL }` — a database outage was
+    // indistinguishable from a healthy load. The context is reduced to the
+    // error class and driver code: a driver message can carry the failing SQL
+    // and its bound parameters (learner ids, answers) and must not be logged
+    // here.
+    const category: FallbackCategory = error instanceof PersistedDataError ? "deserialization_error" : "database_error";
+    return fallback(category, safeFailureContext(error));
   }
 }
 

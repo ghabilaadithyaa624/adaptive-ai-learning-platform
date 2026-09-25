@@ -34,13 +34,30 @@ export const CACHE_TTL = {
   reference: 60_000,
   /** Model registry / classifier — invalidated explicitly on retrain. */
   model: 300_000,
+  /**
+   * Retry window for a *degraded* model load (fallback in force). Short enough
+   * that recovery is picked up promptly, long enough that a sustained outage
+   * does not turn the hot assessment path into a query storm.
+   */
+  modelDegraded: 30_000,
 } as const;
 
 /**
  * Return the cached value for `key`, or compute it with `loader`, store it for
  * `ttlMs`, and return it. Concurrent misses share one in-flight load.
+ *
+ * `ttlMs` may be a function of the loaded value. That exists for degraded
+ * results: caching a fallback for the full model TTL would pin a transient
+ * failure in place for minutes after the cause cleared, while re-loading on
+ * every request would hammer an already-unhealthy database. A value-dependent
+ * TTL lets the caller keep the happy path cheap and retry the degraded path
+ * soon.
  */
-export async function cached<T>(key: string, ttlMs: number, loader: () => Promise<T>): Promise<T> {
+export async function cached<T>(
+  key: string,
+  ttlMs: number | ((value: T) => number),
+  loader: () => Promise<T>,
+): Promise<T> {
   const hit = store.get(key);
   if (hit && hit.expiresAt > Date.now()) return hit.value as T;
 
@@ -50,7 +67,8 @@ export async function cached<T>(key: string, ttlMs: number, loader: () => Promis
   const promise = (async () => {
     try {
       const value = await loader();
-      store.set(key, { value, expiresAt: Date.now() + ttlMs });
+      const ttl = typeof ttlMs === "function" ? ttlMs(value) : ttlMs;
+      store.set(key, { value, expiresAt: Date.now() + ttl });
       return value;
     } finally {
       inflight.delete(key);
