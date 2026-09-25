@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -533,6 +534,102 @@ export const experimentExposures = pgTable("experiment_exposures", {
   index("experiment_exposure_entity_idx").on(t.entityId),
 ]);
 
+/* ------------------------------------------------------------------ */
+/* Misconception longitudinal tracking                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One misconception episode per (learner, hypothesis): detected, remediated,
+ * then either resolved, recurred, or still unproven.
+ *
+ * The rows are a DERIVED, recomputable projection of responses + remediations —
+ * the deterministic detector in `lib/ml/misconceptions.ts` remains the source of
+ * truth, and an episode can always be rebuilt from the underlying evidence by
+ * `buildMisconceptionEpisodes`. Persisting it buys queryable history and a
+ * stable place to attach expert labels, not a second opinion.
+ *
+ * `ground_truth_label` is the hook for real-learner evaluation: until an expert
+ * fills it in, detection precision is unmeasured — which the metrics layer
+ * reports as `null` rather than as a flattering default.
+ */
+export const misconceptionEpisodes = pgTable("misconception_episodes", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "cascade" }).notNull(),
+  /** Detector hypothesis id: `skillId|subskill|prereqId|normalized label`. */
+  hypothesisId: text("hypothesis_id").notNull(),
+  subskill: text("subskill"),
+  misconception: text("misconception").notNull(),
+  confidenceAtDetection: text("confidence_at_detection").notNull(), // MEDIUM | HIGH
+  errorPattern: text("error_pattern").notNull(),
+
+  /** First error evidence vs. when the detector would have flagged it. */
+  firstObservedAt: timestamp("first_observed_at", { withTimezone: true }).notNull(),
+  detectedAt: timestamp("detected_at", { withTimezone: true }).notNull(),
+  detectionEvidenceCount: integer("detection_evidence_count").notNull().default(0),
+
+  firstRemediationAt: timestamp("first_remediation_at", { withTimezone: true }),
+  /** resolved | recurred | temporarily_suppressed | insufficient_evidence */
+  status: text("status").notNull().default("insufficient_evidence"),
+  statusReason: text("status_reason").notNull().default(""),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+
+  postRemediationOpportunities: integer("post_remediation_opportunities").notNull().default(0),
+  cleanOpportunities: integer("clean_opportunities").notNull().default(0),
+  recurrences: integer("recurrences").notNull().default(0),
+
+  masteryAtDetection: real("mastery_at_detection"),
+  masteryLatest: real("mastery_latest"),
+  retention: real("retention"),
+
+  /** Expert label for detection-quality evaluation. confirmed | refuted | unknown */
+  groundTruthLabel: text("ground_truth_label").notNull().default("unknown"),
+  groundTruthBy: integer("ground_truth_by").references(() => users.id, { onDelete: "set null" }),
+  groundTruthAt: timestamp("ground_truth_at", { withTimezone: true }),
+  groundTruthNote: text("ground_truth_note"),
+
+  /** Opportunity-by-opportunity trail, so a status can always be re-derived. */
+  opportunities: jsonb("opportunities").$type<unknown[]>().notNull().default([]),
+  /** Config the status was computed under — thresholds change over time. */
+  evaluationConfig: jsonb("evaluation_config").$type<Record<string, unknown>>().notNull().default({}),
+
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("misconception_episode_student_hypothesis_idx").on(t.studentId, t.hypothesisId),
+  index("misconception_episode_status_idx").on(t.status, t.detectedAt.desc()),
+  index("misconception_episode_skill_idx").on(t.skillId),
+]);
+
+/**
+ * Remediation exposures attached to an episode.
+ *
+ * `counts_as_evidence` is stored as a hard `false` for every generated
+ * explanation. It exists so the rule survives contact with future query
+ * authors: an analyst joining this table cannot accidentally treat "the tutor
+ * explained it" as "the learner fixed it", because the column says otherwise
+ * and the check constraint keeps it that way.
+ */
+export const misconceptionRemediations = pgTable("misconception_remediations", {
+  id: serial("id").primaryKey(),
+  episodeId: integer("episode_id").references(() => misconceptionEpisodes.id, { onDelete: "cascade" }).notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  /** tutor_llm | tutor_deterministic | recommendation | targeted_practice | instructor | worked_example */
+  source: text("source").notNull(),
+  tutorInteractionId: integer("tutor_interaction_id").references(() => tutorInteractions.id, { onDelete: "set null" }),
+  recommendationId: integer("recommendation_id").references(() => recommendations.id, { onDelete: "set null" }),
+  /** True when the remediation named this specific misconception. */
+  targeted: boolean("targeted").notNull().default(false),
+  /** Learner-reported usefulness. Analysis only — never outcome evidence. */
+  helpful: boolean("helpful"),
+  /** ALWAYS false: interventions are never evidence of resolution. */
+  countsAsEvidence: boolean("counts_as_evidence").notNull().default(false),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("misconception_remediation_episode_idx").on(t.episodeId, t.occurredAt),
+  check("misconception_remediation_not_evidence", sql`${t.countsAsEvidence} = false`),
+]);
+
 export type User = typeof users.$inferSelect;
 export type Institution = typeof institutions.$inferSelect;
 export type Skill = typeof skills.$inferSelect;
@@ -550,6 +647,8 @@ export type ModelEvaluation = typeof modelEvaluations.$inferSelect;
 export type ActivityEvent = typeof activityEvents.$inferSelect;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type TutorInteraction = typeof tutorInteractions.$inferSelect;
+export type MisconceptionEpisodeRow = typeof misconceptionEpisodes.$inferSelect;
+export type MisconceptionRemediationRow = typeof misconceptionRemediations.$inferSelect;
 export type ExperimentRow = typeof experiments.$inferSelect;
 export type ExperimentAssignmentRow = typeof experimentAssignments.$inferSelect;
 export type ExperimentExposureRow = typeof experimentExposures.$inferSelect;
