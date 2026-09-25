@@ -2,6 +2,21 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 /**
+ * Edge interception (Next.js "proxy" convention).
+ *
+ * Renamed from `src/middleware.ts` for Next 16, which deprecates the
+ * `middleware` file convention in favour of `proxy` (having both is a build
+ * error). The module must export a function named `proxy` — Next resolves
+ * `mod.proxy ?? mod.default` for this file, and throws E394 otherwise.
+ *
+ * SCOPE — read before adding to this file: this layer performs NO
+ * authentication or authorization. It only attaches a CSP + nonce. Auth gating
+ * lives in `lib/auth` (sessions), `lib/api` (`withAuth`/`guardPublic`),
+ * `lib/authz` (roles, capabilities, tenancy) and `lib/page-guards` (RSC pages),
+ * where the database is reachable and decisions can be audited. Keeping
+ * authorization out of the edge is also what makes the platform immune to the
+ * class of CVEs where a crafted request bypasses edge-evaluated auth.
+ *
  * Content-Security-Policy (defense-in-depth against XSS/injection).
  *
  * We emit a per-request nonce and use `strict-dynamic`, which is the approach
@@ -15,7 +30,7 @@ import type { NextRequest } from "next/server";
  * so the app can still be embedded in trusted preview environments (matching
  * the existing X-Frame-Options decision); tighten it in a real deployment.
  */
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const isProd = process.env.NODE_ENV === "production";
   const nonce = crypto.randomUUID().replace(/-/g, "");
 

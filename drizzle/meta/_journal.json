@@ -15,6 +15,13 @@
       "when": 1790266071166,
       "tag": "0001_experiments",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790307450335,
+      "tag": "0002_secret_sphinx",
+      "breakpoints": true
     }
   ]
 }

@@ -100,6 +100,8 @@ names, enum outcomes).
 | Recommendation acceptance       | `adaptiq_recommendation_actions_total{status}`     | counter   |
 | Model prediction volume         | `adaptiq_model_predictions_total{model,surface}`   | counter   |
 | Model errors                    | `adaptiq_model_errors_total{model,op}`             | counter   |
+| Model fallback                  | `adaptiq_ml_model_fallback_total{model,version,category}` | counter |
+| Fallback in force               | `adaptiq_ml_model_fallback_active{model}`          | gauge     |
 | Database latency                | `adaptiq_db_query_duration_seconds{op,status}`     | histogram |
 
 Supporting metrics: `adaptiq_answers_total{correct}`,
@@ -110,7 +112,60 @@ Supporting metrics: `adaptiq_answers_total{correct}`,
 `adaptiq_model_training_total{model,verdict}`,
 `adaptiq_auth_events_total{action,outcome}`,
 `adaptiq_db_errors_total{op}`, `adaptiq_db_pool_connections{state}`,
-`adaptiq_build_info`, `adaptiq_process_uptime_seconds`.
+`adaptiq_build_info`, `adaptiq_process_uptime_seconds`,
+`adaptiq_ml_model_fallback_since_timestamp_seconds{model}`,
+`adaptiq_persisted_payload_reads_total{boundary,status}`,
+`adaptiq_persisted_payload_rejections_total{boundary,status,code}`.
+
+### Model-registry fallback
+
+The registry falls back to the built-in heuristic classifier when the registered
+model cannot be loaded. The fallback is deliberate — a learner mid-assessment
+must not see an error because a JSONB column is corrupt — but it is never
+silent.
+
+- **Counter** `adaptiq_ml_model_fallback_total{model,version,category}` — every
+  fallback, always, with no rate limiting: counters are how you measure a rate.
+  `category` is a closed set: `no_registered_model`, `database_error`,
+  `malformed_params`, `unsupported_version`, `deserialization_error`.
+  `version` is the *attempted* model version, or `unknown` when the failure
+  happened before it could be read, sanitized to ≤64 safe characters so a
+  database value cannot blow up label cardinality.
+- **Gauge** `adaptiq_ml_model_fallback_active{model}` — `1` while this replica
+  is serving on a fallback, `0` once recovered. This is the "are we degraded
+  *right now*" signal.
+- **Gauge** `adaptiq_ml_model_fallback_since_timestamp_seconds{model}` — start of
+  the current degraded streak, for "how long".
+- **Log** `ml.model_fallback` (warn) on the first occurrence per
+  (model, version, category), then deduplicated for
+  `ML_FALLBACK_LOG_INTERVAL_MS` (default 60s). The suppressed count is carried
+  on the next emission, so a quiet log never means a quiet system.
+  `ml.model_fallback_recovered` (info) always fires, so incidents visibly close.
+- **Health** `GET /api/health` includes an `ml_model_serving` check, and
+  `GET /api/ml` returns a `serving` object (source, attempted version, category,
+  since, consecutive failures).
+
+Fallback is reported as a **non-critical `warn`** and deliberately does **not**
+fail readiness. No governance policy in this repo requires failing closed on a
+degraded model, and a heuristic classifier still produces usable predictions —
+marking it critical would let one corrupt row evict every replica from the load
+balancer and convert a quality regression into an outage. Escalation stays a
+human decision.
+
+```promql
+# Is any instance serving on a fallback model right now?
+max by (model) (adaptiq_ml_model_fallback_active) > 0
+
+# Fallbacks per minute by cause
+sum by (category) (rate(adaptiq_ml_model_fallback_total[5m])) * 60
+
+# How long has the longest-running degradation lasted?
+time() - min by (model) (adaptiq_ml_model_fallback_since_timestamp_seconds > 0)
+```
+
+Suggested alert: `adaptiq_ml_model_fallback_active == 1` for 15m — a warning,
+not a page, except for `category="database_error"`, which usually co-fires with
+the database alerts anyway.
 
 ### Derived signals (PromQL)
 
@@ -145,7 +200,7 @@ If `METRICS_TOKEN` is set, scrapers must present `Authorization: Bearer <token>`
 |---------------------|------------|-------------------------------------|--------------|
 | `/api/health/live`  | liveness   | process/event-loop only (no deps)   | 200          |
 | `/api/health/ready` | readiness  | PostgreSQL reachable + core schema  | 200 / **503**|
-| `/api/health`       | deep       | app + PostgreSQL + schema + pool + counts | 200 / **503** |
+| `/api/health`       | deep       | app + PostgreSQL + schema + pool + ML serving state | 200 / **503** |
 
 - **Liveness** never calls a dependency, so a slow database cannot trigger a
   restart storm.
@@ -234,5 +289,6 @@ observability/
 | `LOG_LEVEL`       | `info`(`silent` in test) | Minimum log level                         |
 | `METRICS_TOKEN`   | *(unset)*      | Bearer token required to scrape `/api/metrics`      |
 | `SLOW_QUERY_MS`   | `300`          | Threshold for `db.slow_query` warnings              |
+| `ML_FALLBACK_LOG_INTERVAL_MS` | `60000` | Dedup window for repeated model-fallback warnings |
 | `APP_VERSION`     | `npm_package_version` | Value on the `adaptiq_build_info` gauge       |
 ```

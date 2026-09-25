@@ -111,9 +111,9 @@ Lint is still **red** (P2-1). After the P1-1 remediation, all runtime/build depe
 - **Fix (applied):** Added **24 foreign keys** with deliberate `onDelete` semantics — `cascade` for owned children (a learner's assessments/items/mastery/paths/recs/tutor interactions/sessions), `set null` for soft links (question author/reviewer, nullable skill refs). `audit_logs` is intentionally left FK-free to preserve forensic history (documented in the schema). Wrapped all six multi-table deletions in `db.transaction(...)`. Verified on a live Postgres: cascade delete removes dependents, `set null` nulls soft links, and orphan inserts are now rejected (`SQLSTATE 23503`); full seed + 300/300 tests pass under the constraints.
 
 **P2-3 — No Content-Security-Policy header — ✅ FIXED**
-- **Files:** `src/middleware.ts` (new).
+- **Files:** `src/proxy.ts` (originally added as `src/middleware.ts`; renamed for the Next 16 proxy convention).
 - **Problem:** No CSP defense-in-depth against XSS/injection.
-- **Fix (applied):** Added a **nonce-based strict CSP** via middleware (Next.js's documented App Router approach): a per-request nonce + `'strict-dynamic'` so scripts run WITHOUT `'unsafe-inline'`; `default-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, restricted img/font/connect. Verified against a running production server: page returns 200, the CSP header is present, and Next stamps the nonce onto every script tag (nothing blocked). `frame-ancestors` is intentionally left unset so the app remains embeddable in the trusted preview (consistent with the existing X-Frame-Options decision).
+- **Fix (applied):** Added a **nonce-based strict CSP** via the edge proxy layer (Next.js's documented App Router approach): a per-request nonce + `'strict-dynamic'` so scripts run WITHOUT `'unsafe-inline'`; `default-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, restricted img/font/connect. Verified against a running production server: page returns 200, the CSP header is present, and Next stamps the nonce onto every script tag (nothing blocked). `frame-ancestors` is intentionally left unset so the app remains embeddable in the trusted preview (consistent with the existing X-Frame-Options decision).
 
 **P2-4 — Metrics endpoint open when token unset — ✅ FIXED**
 - **File:** `src/app/api/metrics/route.ts`.

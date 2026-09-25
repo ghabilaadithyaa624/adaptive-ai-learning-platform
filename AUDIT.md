@@ -14,7 +14,7 @@
 |---|-----------|----------------|------------------------|
 | 1 | Project architecture | **Functional prototype** | Clean single Next.js app, good layering (`db`→`queries`/`engine`/`ml`→`api`→`components`), but monolithic, no service boundaries, runtime seeding. |
 | 2 | Frontend architecture | **Functional prototype** | Server Components + focused client islands, shared `ui.tsx`; no design system tokens, no state lib, some prop-drilling. |
-| 3 | Next.js App Router structure | **Functional prototype** | Correct route groups & dynamic `[id]` routes, `force-dynamic` everywhere, but **no `middleware.ts`** for auth gating. |
+| 3 | Next.js App Router structure | **Functional prototype** | Correct route groups & dynamic `[id]` routes, `force-dynamic` everywhere, but **no edge auth gating** (`src/proxy.ts` only attaches CSP); authentication/authorization are enforced in the route + RSC layers (`lib/api`, `lib/authz`, `lib/page-guards`). |
 | 4 | API architecture | **Partially implemented** | Consistent `withUser`/`ok`/`fail` pattern, but authz is ad-hoc per-route, inconsistent, and tenant-blind. |
 | 5 | PostgreSQL/Drizzle schema | **Weak implementation** | No foreign keys, no cascade, no `references()`, sparse indexes, unbounded JSONB, **no migrations directory**. |
 | 6 | Authentication | **Security risk** | Custom scrypt sessions are okay in shape, but cookie lacks `secure`, no rate limiting, no session hygiene. |
@@ -289,7 +289,7 @@ Files: `src/lib/ml/*`, `engine.ts`.
 ### P1 — Required for production
 7. **Migrations & bootstrap:** add Drizzle migrations, `db:migrate`/`db:seed` scripts, remove runtime seeding from `layout.tsx`/`auth`/`health`. *(seed.ts, package.json, drizzle/)*
 8. **Referential integrity & indexes:** FKs + cascade, tenant/`studentId`/`status`/`expiresAt` indexes. *(schema.ts)*
-9. **Session hardening + rate limiting + CSRF:** `secure`/`__Host-` cookie, rotation/expiry sweep, login throttling, CSRF/origin checks. *(auth.ts, middleware.ts)*
+9. **Session hardening + rate limiting + CSRF:** `secure`/`__Host-` cookie, rotation/expiry sweep, login throttling, CSRF/origin checks. *(auth.ts, request-context.ts, proxy.ts)*
 10. **Validation & error contract:** zod on every route; stop returning raw `error.message`. *(api.ts, all routes)*
 11. **Async, governed ML training:** move `trainAndPersistClassifier` off the request path; versioned model registry with rollback + leakage-safe eval. *(registry.ts)*
 12. **Observability:** structured logging, error reporting, deep non-seeding health, security headers. *(next.config.ts, lib)*

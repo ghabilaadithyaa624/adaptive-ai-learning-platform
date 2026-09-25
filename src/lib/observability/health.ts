@@ -15,6 +15,7 @@ import { sql } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { now } from "./metrics";
 import { round } from "@/lib/utils";
+import { listModelServingStatus } from "@/lib/ml/model-fallback";
 
 export type CheckStatus = "pass" | "warn" | "fail";
 
@@ -87,6 +88,41 @@ export function checkPool(): Check {
   };
 }
 
+/**
+ * Is prediction traffic being served by a fallback model?
+ *
+ * Reported as a NON-CRITICAL warn, never a fail. A fallback classifier still
+ * produces usable predictions, and no governance policy here requires failing
+ * closed on model degradation — marking it critical would let a corrupt JSONB
+ * column pull the instance out of the load balancer and turn a quality problem
+ * into an outage. Operators get the signal; the decision stays human.
+ *
+ * Process-local by design: it answers "is *this* replica degraded", which is
+ * what a per-instance health endpoint is for. The Prometheus gauge
+ * `adaptiq_ml_model_fallback_active` aggregates the same signal across replicas.
+ */
+export function checkModelServing(): Check {
+  const statuses = listModelServingStatus();
+  const degraded = statuses.filter((s) => s.source === "fallback");
+  if (!degraded.length) {
+    const serving = statuses.map((s) => `${s.model}@${s.servingVersion}`).join(" ");
+    return {
+      name: "ml_model_serving",
+      status: "pass",
+      critical: false,
+      detail: serving || "no model loaded in this process yet",
+    };
+  }
+  return {
+    name: "ml_model_serving",
+    status: "warn",
+    critical: false,
+    detail: degraded
+      .map((s) => `${s.model}: fallback since ${s.since} (${s.category}, ${s.consecutiveFailures} failed loads)`)
+      .join("; "),
+  };
+}
+
 function overall(checks: Check[]): CheckStatus {
   if (checks.some((c) => c.critical && c.status === "fail")) return "fail";
   if (checks.some((c) => c.status !== "pass")) return "warn";
@@ -111,6 +147,6 @@ export async function readiness(): Promise<{ status: CheckStatus; checks: Check[
 /** Deep health: everything, for the dashboard endpoint. */
 export async function deepHealth(): Promise<{ status: CheckStatus; checks: Check[]; uptimeSeconds: number }> {
   const [postgres, schema] = await Promise.all([checkPostgres(), checkSchema()]);
-  const checks = [postgres, schema, checkPool()];
+  const checks = [postgres, schema, checkPool(), checkModelServing()];
   return { status: overall(checks), checks, uptimeSeconds: uptimeSeconds() };
 }

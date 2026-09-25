@@ -1,0 +1,1342 @@
+{
+  "source": "simulation",
+  "datasetVersion": "n18457-span35d-ce2467z",
+  "trainedThrough": "2026-02-06T00:05:00.000Z",
+  "evidence": {
+    "totalResponses": 18457,
+    "totalLearners": 220,
+    "totalSkills": 8,
+    "eligibleSkills": [
+      "skill-1",
+      "skill-2",
+      "skill-3",
+      "skill-4",
+      "skill-5",
+      "skill-6",
+      "skill-7",
+      "skill-8"
+    ],
+    "ineligibleSkills": [],
+    "thresholds": {
+      "minOpportunitiesPerSkill": 200,
+      "minLearnersPerSkill": 30,
+      "minSequencesPerSkill": 30,
+      "minSequenceLength": 2,
+      "minTotalOpportunities": 2000
+    },
+    "sufficientForSkillSpecific": true,
+    "requirement": "Sufficient: 8/8 skills meet the per-skill thresholds."
+  },
+  "artifacts": {
+    "current-global": {
+      "schemaVersion": "bkt-params-v1",
+      "version": "bkt-skill-candidate-1-global",
+      "global": {
+        "priorMastery": 0.113,
+        "learn": 0.0704,
+        "slip": 0.3,
+        "guess": 0.3998,
+        "forget": 0.035
+      },
+      "skills": {
+        "skill-1": {
+          "skillId": "skill-1",
+          "opportunities": 1659,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": null,
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": null,
+          "emIterations": 0,
+          "converged": false,
+          "flags": [
+            "variant_global"
+          ]
+        },
+        "skill-2": {
+          "skillId": "skill-2",
+          "opportunities": 1648,
+          "learners": 199,
+          "sequences": 198,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": null,
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": null,
+          "emIterations": 0,
+          "converged": false,
+          "flags": [
+            "variant_global"
+          ]
+        },
+        "skill-3": {
+          "skillId": "skill-3",
+          "opportunities": 1654,
+          "learners": 199,
+          "sequences": 198,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": null,
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": null,
+          "emIterations": 0,
+          "converged": false,
+          "flags": [
+            "variant_global"
+          ]
+        },
+        "skill-4": {
+          "skillId": "skill-4",
+          "opportunities": 1691,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": null,
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": null,
+          "emIterations": 0,
+          "converged": false,
+          "flags": [
+            "variant_global"
+          ]
+        },
+        "skill-5": {
+          "skillId": "skill-5",
+          "opportunities": 1706,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": null,
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": null,
+          "emIterations": 0,
+          "converged": false,
+          "flags": [
+            "variant_global"
+          ]
+        },
+        "skill-6": {
+          "skillId": "skill-6",
+          "opportunities": 1653,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": null,
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": null,
+          "emIterations": 0,
+          "converged": false,
+          "flags": [
+            "variant_global"
+          ]
+        },
+        "skill-7": {
+          "skillId": "skill-7",
+          "opportunities": 1693,
+          "learners": 199,
+          "sequences": 198,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": null,
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": null,
+          "emIterations": 0,
+          "converged": false,
+          "flags": [
+            "variant_global"
+          ]
+        },
+        "skill-8": {
+          "skillId": "skill-8",
+          "opportunities": 1656,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": null,
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": null,
+          "emIterations": 0,
+          "converged": false,
+          "flags": [
+            "variant_global"
+          ]
+        }
+      },
+      "provenance": {
+        "algorithm": "bkt-em-forward-backward-v1 (variant=global)",
+        "datasetVersion": "n18457-span35d-ce2467z",
+        "trainedThrough": "2026-02-06T00:05:00.000Z",
+        "rows": 13360,
+        "learners": 199,
+        "skills": 8,
+        "heldOutLearners": 0,
+        "thresholds": {
+          "minOpportunitiesPerSkill": 200,
+          "minLearnersPerSkill": 30,
+          "minSequencesPerSkill": 30,
+          "minSequenceLength": 2,
+          "minTotalOpportunities": 2000
+        },
+        "shrinkageK": 300,
+        "bounds": {
+          "priorMastery": {
+            "min": 0.01,
+            "max": 0.95
+          },
+          "learn": {
+            "min": 0.001,
+            "max": 0.6
+          },
+          "slip": {
+            "min": 0.01,
+            "max": 0.3
+          },
+          "guess": {
+            "min": 0.01,
+            "max": 0.4
+          },
+          "maxSlipPlusGuess": 0.9
+        },
+        "forgetPolicy": {
+          "estimated": false,
+          "reason": "serving applies `forget` as between-session exponential decay outside the BKT recursion; fitting a within-sequence forget transition would estimate a different quantity",
+          "inheritedValue": 0.035
+        },
+        "emIterations": 200,
+        "tolerance": 0.000001
+      }
+    },
+    "skill-specific": {
+      "schemaVersion": "bkt-params-v1",
+      "version": "bkt-skill-candidate-1-skill",
+      "global": {
+        "priorMastery": 0.113,
+        "learn": 0.0704,
+        "slip": 0.3,
+        "guess": 0.3998,
+        "forget": 0.035
+      },
+      "skills": {
+        "skill-1": {
+          "skillId": "skill-1",
+          "opportunities": 1659,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.27,
+            "learn": 0.1995,
+            "slip": 0.3,
+            "guess": 0.4,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.671534,
+          "emIterations": 15,
+          "converged": true,
+          "flags": [
+            "guess_at_bound",
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        },
+        "skill-2": {
+          "skillId": "skill-2",
+          "opportunities": 1648,
+          "learners": 199,
+          "sequences": 198,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.0721,
+            "learn": 0.1221,
+            "slip": 0.3,
+            "guess": 0.4,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.681621,
+          "emIterations": 30,
+          "converged": true,
+          "flags": [
+            "guess_at_bound",
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        },
+        "skill-3": {
+          "skillId": "skill-3",
+          "opportunities": 1654,
+          "learners": 199,
+          "sequences": 198,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.17,
+            "learn": 0.1219,
+            "slip": 0.3,
+            "guess": 0.4,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.68082,
+          "emIterations": 22,
+          "converged": true,
+          "flags": [
+            "guess_at_bound",
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        },
+        "skill-4": {
+          "skillId": "skill-4",
+          "opportunities": 1691,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.0719,
+            "learn": 0.0477,
+            "slip": 0.2402,
+            "guess": 0.3944,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.0719,
+            "learn": 0.0477,
+            "slip": 0.2402,
+            "guess": 0.3944,
+            "forget": 0.035
+          },
+          "source": "fitted",
+          "shrinkageWeight": 1,
+          "trainLogLikelihood": -0.68058,
+          "emIterations": 48,
+          "converged": true,
+          "flags": []
+        },
+        "skill-5": {
+          "skillId": "skill-5",
+          "opportunities": 1706,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.1794,
+            "learn": 0.0862,
+            "slip": 0.3,
+            "guess": 0.3753,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.681282,
+          "emIterations": 18,
+          "converged": true,
+          "flags": [
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        },
+        "skill-6": {
+          "skillId": "skill-6",
+          "opportunities": 1653,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.1053,
+            "learn": 0.0244,
+            "slip": 0.3,
+            "guess": 0.4,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.687521,
+          "emIterations": 37,
+          "converged": true,
+          "flags": [
+            "guess_at_bound",
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        },
+        "skill-7": {
+          "skillId": "skill-7",
+          "opportunities": 1693,
+          "learners": 199,
+          "sequences": 198,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.01,
+            "learn": 0.028,
+            "slip": 0.3,
+            "guess": 0.3989,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.682082,
+          "emIterations": 34,
+          "converged": true,
+          "flags": [
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        },
+        "skill-8": {
+          "skillId": "skill-8",
+          "opportunities": 1656,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.01,
+            "learn": 0.0476,
+            "slip": 0.3,
+            "guess": 0.3779,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.678724,
+          "emIterations": 33,
+          "converged": true,
+          "flags": [
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        }
+      },
+      "provenance": {
+        "algorithm": "bkt-em-forward-backward-v1 (variant=skill-specific)",
+        "datasetVersion": "n18457-span35d-ce2467z",
+        "trainedThrough": "2026-02-06T00:05:00.000Z",
+        "rows": 13360,
+        "learners": 199,
+        "skills": 8,
+        "heldOutLearners": 0,
+        "thresholds": {
+          "minOpportunitiesPerSkill": 200,
+          "minLearnersPerSkill": 30,
+          "minSequencesPerSkill": 30,
+          "minSequenceLength": 2,
+          "minTotalOpportunities": 2000
+        },
+        "shrinkageK": 300,
+        "bounds": {
+          "priorMastery": {
+            "min": 0.01,
+            "max": 0.95
+          },
+          "learn": {
+            "min": 0.001,
+            "max": 0.6
+          },
+          "slip": {
+            "min": 0.01,
+            "max": 0.3
+          },
+          "guess": {
+            "min": 0.01,
+            "max": 0.4
+          },
+          "maxSlipPlusGuess": 0.9
+        },
+        "forgetPolicy": {
+          "estimated": false,
+          "reason": "serving applies `forget` as between-session exponential decay outside the BKT recursion; fitting a within-sequence forget transition would estimate a different quantity",
+          "inheritedValue": 0.035
+        },
+        "emIterations": 200,
+        "tolerance": 0.000001
+      }
+    },
+    "skill-specific-shrunk": {
+      "schemaVersion": "bkt-params-v1",
+      "version": "bkt-skill-candidate-1-shrunk",
+      "global": {
+        "priorMastery": 0.113,
+        "learn": 0.0704,
+        "slip": 0.3,
+        "guess": 0.3998,
+        "forget": 0.035
+      },
+      "skills": {
+        "skill-1": {
+          "skillId": "skill-1",
+          "opportunities": 1659,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.27,
+            "learn": 0.1995,
+            "slip": 0.3,
+            "guess": 0.4,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.671534,
+          "emIterations": 15,
+          "converged": true,
+          "flags": [
+            "guess_at_bound",
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        },
+        "skill-2": {
+          "skillId": "skill-2",
+          "opportunities": 1648,
+          "learners": 199,
+          "sequences": 198,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.0721,
+            "learn": 0.1221,
+            "slip": 0.3,
+            "guess": 0.4,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.681621,
+          "emIterations": 30,
+          "converged": true,
+          "flags": [
+            "guess_at_bound",
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        },
+        "skill-3": {
+          "skillId": "skill-3",
+          "opportunities": 1654,
+          "learners": 199,
+          "sequences": 198,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.17,
+            "learn": 0.1219,
+            "slip": 0.3,
+            "guess": 0.4,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.68082,
+          "emIterations": 22,
+          "converged": true,
+          "flags": [
+            "guess_at_bound",
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        },
+        "skill-4": {
+          "skillId": "skill-4",
+          "opportunities": 1691,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.0781,
+            "learn": 0.0511,
+            "slip": 0.2492,
+            "guess": 0.3952,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.0719,
+            "learn": 0.0477,
+            "slip": 0.2402,
+            "guess": 0.3944,
+            "forget": 0.035
+          },
+          "source": "shrunk",
+          "shrinkageWeight": 0.8493,
+          "trainLogLikelihood": -0.68058,
+          "emIterations": 48,
+          "converged": true,
+          "flags": []
+        },
+        "skill-5": {
+          "skillId": "skill-5",
+          "opportunities": 1706,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.1794,
+            "learn": 0.0862,
+            "slip": 0.3,
+            "guess": 0.3753,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.681282,
+          "emIterations": 18,
+          "converged": true,
+          "flags": [
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        },
+        "skill-6": {
+          "skillId": "skill-6",
+          "opportunities": 1653,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.1053,
+            "learn": 0.0244,
+            "slip": 0.3,
+            "guess": 0.4,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.687521,
+          "emIterations": 37,
+          "converged": true,
+          "flags": [
+            "guess_at_bound",
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        },
+        "skill-7": {
+          "skillId": "skill-7",
+          "opportunities": 1693,
+          "learners": 199,
+          "sequences": 198,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.01,
+            "learn": 0.028,
+            "slip": 0.3,
+            "guess": 0.3989,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.682082,
+          "emIterations": 34,
+          "converged": true,
+          "flags": [
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        },
+        "skill-8": {
+          "skillId": "skill-8",
+          "opportunities": 1656,
+          "learners": 199,
+          "sequences": 199,
+          "params": {
+            "priorMastery": 0.113,
+            "learn": 0.0704,
+            "slip": 0.3,
+            "guess": 0.3998,
+            "forget": 0.035
+          },
+          "rawFit": {
+            "priorMastery": 0.01,
+            "learn": 0.0476,
+            "slip": 0.3,
+            "guess": 0.3779,
+            "forget": 0.035
+          },
+          "source": "global-fallback",
+          "shrinkageWeight": 0,
+          "trainLogLikelihood": -0.678724,
+          "emIterations": 33,
+          "converged": true,
+          "flags": [
+            "slip_at_bound",
+            "rejected_degenerate"
+          ]
+        }
+      },
+      "provenance": {
+        "algorithm": "bkt-em-forward-backward-v1 (variant=skill-specific-shrunk)",
+        "datasetVersion": "n18457-span35d-ce2467z",
+        "trainedThrough": "2026-02-06T00:05:00.000Z",
+        "rows": 13360,
+        "learners": 199,
+        "skills": 8,
+        "heldOutLearners": 0,
+        "thresholds": {
+          "minOpportunitiesPerSkill": 200,
+          "minLearnersPerSkill": 30,
+          "minSequencesPerSkill": 30,
+          "minSequenceLength": 2,
+          "minTotalOpportunities": 2000
+        },
+        "shrinkageK": 300,
+        "bounds": {
+          "priorMastery": {
+            "min": 0.01,
+            "max": 0.95
+          },
+          "learn": {
+            "min": 0.001,
+            "max": 0.6
+          },
+          "slip": {
+            "min": 0.01,
+            "max": 0.3
+          },
+          "guess": {
+            "min": 0.01,
+            "max": 0.4
+          },
+          "maxSlipPlusGuess": 0.9
+        },
+        "forgetPolicy": {
+          "estimated": false,
+          "reason": "serving applies `forget` as between-session exponential decay outside the BKT recursion; fitting a within-sequence forget transition would estimate a different quantity",
+          "inheritedValue": 0.035
+        },
+        "emIterations": 200,
+        "tolerance": 0.000001
+      }
+    }
+  },
+  "comparison": {
+    "variants": [
+      {
+        "variant": "current-global",
+        "chronological": {
+          "responses": 3340,
+          "learners": 188,
+          "accuracy": 0.4721556886227545,
+          "brier": 0.2560447758367707,
+          "logLoss": 0.705309732565109,
+          "calibrationError": 0.10671852013715033,
+          "maxCalibrationError": 0.10693869066711448,
+          "reliability": [
+            {
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 2898,
+              "meanConfidence": 0.44654647151369986,
+              "observedAccuracy": 0.5534851621808143
+            },
+            {
+              "lower": 0.5,
+              "upper": 0.6,
+              "count": 411,
+              "meanConfidence": 0.5286801972982828,
+              "observedAccuracy": 0.635036496350365
+            },
+            {
+              "lower": 0.6,
+              "upper": 0.7,
+              "count": 31,
+              "meanConfidence": 0.6187389421168207,
+              "observedAccuracy": 0.7096774193548387
+            }
+          ],
+          "masteryRmse": 0.4905,
+          "volatility": 0.09684398349440794,
+          "stabilityScore": 0.8063120330111841,
+          "monotonicity": 0.6971866208190062
+        },
+        "heldOutLearners": {
+          "responses": 1757,
+          "learners": 21,
+          "accuracy": 0.5520774046670461,
+          "brier": 0.24504028850700335,
+          "logLoss": 0.6831530906086426,
+          "calibrationError": 0.008267193123930644,
+          "maxCalibrationError": 0.042851534215557874,
+          "reliability": [
+            {
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 1198,
+              "meanConfidence": 0.4540277363261188,
+              "observedAccuracy": 0.4582637729549249
+            },
+            {
+              "lower": 0.5,
+              "upper": 0.6,
+              "count": 452,
+              "meanConfidence": 0.5401204153177616,
+              "observedAccuracy": 0.5508849557522124
+            },
+            {
+              "lower": 0.6,
+              "upper": 0.7,
+              "count": 107,
+              "meanConfidence": 0.6300456620461243,
+              "observedAccuracy": 0.6728971962616822
+            }
+          ],
+          "masteryRmse": 0.3378,
+          "volatility": 0.09555488718524983,
+          "stabilityScore": 0.8088902256295003,
+          "monotonicity": 0.5661929092732665
+        },
+        "temporal": {
+          "blocks": [
+            {
+              "block": 1,
+              "responses": 835,
+              "brier": 0.25921,
+              "accuracy": 0.45988
+            },
+            {
+              "block": 2,
+              "responses": 835,
+              "brier": 0.25513,
+              "accuracy": 0.48623
+            },
+            {
+              "block": 3,
+              "responses": 835,
+              "brier": 0.25538,
+              "accuracy": 0.47665
+            },
+            {
+              "block": 4,
+              "responses": 835,
+              "brier": 0.25446,
+              "accuracy": 0.46587
+            }
+          ],
+          "brierRange": 0.00475,
+          "brierStdDev": 0.00186
+        },
+        "selection": {
+          "zpdHitRate": 0.13234,
+          "informationPerItem": 0.9878,
+          "prematureMasteryRate": 0.0003
+        },
+        "skillsWithOwnParams": 0,
+        "skillsOnGlobalFallback": 8
+      },
+      {
+        "variant": "skill-specific",
+        "chronological": {
+          "responses": 3340,
+          "learners": 188,
+          "accuracy": 0.47125748502994014,
+          "brier": 0.25640664163862503,
+          "logLoss": 0.7060418267000599,
+          "calibrationError": 0.10832434754128166,
+          "maxCalibrationError": 0.1087501339831643,
+          "reliability": [
+            {
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 2911,
+              "meanConfidence": 0.44501145997080344,
+              "observedAccuracy": 0.5537615939539677
+            },
+            {
+              "lower": 0.5,
+              "upper": 0.6,
+              "count": 397,
+              "meanConfidence": 0.5287373151220499,
+              "observedAccuracy": 0.6347607052896725
+            },
+            {
+              "lower": 0.6,
+              "upper": 0.7,
+              "count": 32,
+              "meanConfidence": 0.6206126604267708,
+              "observedAccuracy": 0.71875
+            }
+          ],
+          "masteryRmse": 0.4964,
+          "volatility": 0.0960234510807611,
+          "stabilityScore": 0.8079530978384778,
+          "monotonicity": 0.6921720329269566
+        },
+        "heldOutLearners": {
+          "responses": 1757,
+          "learners": 21,
+          "accuracy": 0.5515082527034718,
+          "brier": 0.24538567822179758,
+          "logLoss": 0.6838631719432077,
+          "calibrationError": 0.010103852165870007,
+          "maxCalibrationError": 0.029875388750688403,
+          "reliability": [
+            {
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 1219,
+              "meanConfidence": 0.45249913335248193,
+              "observedAccuracy": 0.4593929450369155
+            },
+            {
+              "lower": 0.5,
+              "upper": 0.6,
+              "count": 429,
+              "meanConfidence": 0.540576936041296,
+              "observedAccuracy": 0.5547785547785548
+            },
+            {
+              "lower": 0.6,
+              "upper": 0.7,
+              "count": 109,
+              "meanConfidence": 0.630675069964908,
+              "observedAccuracy": 0.6605504587155964
+            }
+          ],
+          "masteryRmse": 0.345,
+          "volatility": 0.09534819792604184,
+          "stabilityScore": 0.8093036041479164,
+          "monotonicity": 0.5638332153957155
+        },
+        "temporal": {
+          "blocks": [
+            {
+              "block": 1,
+              "responses": 835,
+              "brier": 0.25958,
+              "accuracy": 0.45988
+            },
+            {
+              "block": 2,
+              "responses": 835,
+              "brier": 0.25552,
+              "accuracy": 0.48503
+            },
+            {
+              "block": 3,
+              "responses": 835,
+              "brier": 0.25563,
+              "accuracy": 0.47545
+            },
+            {
+              "block": 4,
+              "responses": 835,
+              "brier": 0.2549,
+              "accuracy": 0.46467
+            }
+          ],
+          "brierRange": 0.00468,
+          "brierStdDev": 0.00185
+        },
+        "selection": {
+          "zpdHitRate": 0.12844,
+          "informationPerItem": 0.98705,
+          "prematureMasteryRate": 0.0003
+        },
+        "skillsWithOwnParams": 1,
+        "skillsOnGlobalFallback": 7
+      },
+      {
+        "variant": "skill-specific-shrunk",
+        "chronological": {
+          "responses": 3340,
+          "learners": 188,
+          "accuracy": 0.47125748502994014,
+          "brier": 0.2563293111303697,
+          "logLoss": 0.7058850364003325,
+          "calibrationError": 0.1080137746022821,
+          "maxCalibrationError": 0.10864650088073913,
+          "reliability": [
+            {
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 2905,
+              "meanConfidence": 0.44522613250996657,
+              "observedAccuracy": 0.5538726333907057
+            },
+            {
+              "lower": 0.5,
+              "upper": 0.6,
+              "count": 403,
+              "meanConfidence": 0.5285377106028228,
+              "observedAccuracy": 0.6327543424317618
+            },
+            {
+              "lower": 0.6,
+              "upper": 0.7,
+              "count": 32,
+              "meanConfidence": 0.6203556410621032,
+              "observedAccuracy": 0.71875
+            }
+          ],
+          "masteryRmse": 0.4954,
+          "volatility": 0.09627134568051562,
+          "stabilityScore": 0.8074573086389687,
+          "monotonicity": 0.6921720329269566
+        },
+        "heldOutLearners": {
+          "responses": 1757,
+          "learners": 21,
+          "accuracy": 0.5515082527034718,
+          "brier": 0.24533753772219077,
+          "logLoss": 0.6837642260853745,
+          "calibrationError": 0.009731155249376093,
+          "maxCalibrationError": 0.02997650420672071,
+          "reliability": [
+            {
+              "lower": 0.4,
+              "upper": 0.5,
+              "count": 1215,
+              "meanConfidence": 0.45278904585128255,
+              "observedAccuracy": 0.45925925925925926
+            },
+            {
+              "lower": 0.5,
+              "upper": 0.6,
+              "count": 433,
+              "meanConfidence": 0.5404875484435807,
+              "observedAccuracy": 0.5542725173210161
+            },
+            {
+              "lower": 0.6,
+              "upper": 0.7,
+              "count": 109,
+              "meanConfidence": 0.6305739545088757,
+              "observedAccuracy": 0.6605504587155964
+            }
+          ],
+          "masteryRmse": 0.3438,
+          "volatility": 0.09552264870537612,
+          "stabilityScore": 0.8089547025892477,
+          "monotonicity": 0.5638332153957155
+        },
+        "temporal": {
+          "blocks": [
+            {
+              "block": 1,
+              "responses": 835,
+              "brier": 0.25951,
+              "accuracy": 0.45988
+            },
+            {
+              "block": 2,
+              "responses": 835,
+              "brier": 0.25543,
+              "accuracy": 0.48503
+            },
+            {
+              "block": 3,
+              "responses": 835,
+              "brier": 0.25556,
+              "accuracy": 0.47665
+            },
+            {
+              "block": 4,
+              "responses": 835,
+              "brier": 0.25481,
+              "accuracy": 0.46347
+            }
+          ],
+          "brierRange": 0.0047,
+          "brierStdDev": 0.00186
+        },
+        "selection": {
+          "zpdHitRate": 0.13024,
+          "informationPerItem": 0.98719,
+          "prematureMasteryRate": 0.0003
+        },
+        "skillsWithOwnParams": 1,
+        "skillsOnGlobalFallback": 7
+      }
+    ],
+    "promotions": {
+      "skill-specific": {
+        "decision": {
+          "promote": false,
+          "verdict": "unchanged",
+          "reasons": [
+            "Primary metric \"brier\" change (-0.0003) is within noise (< 0.002); no superiority claim."
+          ],
+          "comparison": {
+            "metrics": [
+              {
+                "metric": "accuracy",
+                "direction": "higher",
+                "baseline": 0.5520774046670461,
+                "candidate": 0.5515082527034718,
+                "delta": -0.0005691519635743214,
+                "relativeChange": -0.0010309278350516316,
+                "improvement": -0.0005691519635743214,
+                "verdict": "unchanged"
+              },
+              {
+                "metric": "brier",
+                "direction": "lower",
+                "baseline": 0.24504028850700335,
+                "candidate": 0.24538567822179758,
+                "delta": 0.0003453897147942253,
+                "relativeChange": 0.0014095221520454336,
+                "improvement": -0.0003453897147942253,
+                "verdict": "unchanged"
+              },
+              {
+                "metric": "calibrationError",
+                "direction": "lower",
+                "baseline": 0.008267193123930644,
+                "candidate": 0.010103852165870007,
+                "delta": 0.0018366590419393626,
+                "relativeChange": 0.2221623487448085,
+                "improvement": -0.0018366590419393626,
+                "verdict": "unchanged"
+              },
+              {
+                "metric": "logLoss",
+                "direction": "lower",
+                "baseline": 0.6831530906086426,
+                "candidate": 0.6838631719432077,
+                "delta": 0.0007100813345650714,
+                "relativeChange": 0.0010394175834474197,
+                "improvement": -0.0007100813345650714,
+                "verdict": "unchanged"
+              },
+              {
+                "metric": "stabilityScore",
+                "direction": "higher",
+                "baseline": 0.8088902256295003,
+                "candidate": 0.8093036041479164,
+                "delta": 0.0004133785184160521,
+                "relativeChange": 0.000511044027135264,
+                "improvement": 0.0004133785184160521,
+                "verdict": "unchanged"
+              }
+            ],
+            "improvements": [],
+            "regressions": [],
+            "unchanged": [
+              "accuracy",
+              "brier",
+              "calibrationError",
+              "logLoss",
+              "stabilityScore"
+            ]
+          },
+          "regressionAlerts": []
+        },
+        "autoPromote": false,
+        "recommendation": "keep-current",
+        "rationale": [
+          "Primary metric \"brier\" change (-0.0003) is within noise (< 0.002); no superiority claim."
+        ]
+      },
+      "skill-specific-shrunk": {
+        "decision": {
+          "promote": false,
+          "verdict": "unchanged",
+          "reasons": [
+            "Primary metric \"brier\" change (-0.0003) is within noise (< 0.002); no superiority claim."
+          ],
+          "comparison": {
+            "metrics": [
+              {
+                "metric": "accuracy",
+                "direction": "higher",
+                "baseline": 0.5520774046670461,
+                "candidate": 0.5515082527034718,
+                "delta": -0.0005691519635743214,
+                "relativeChange": -0.0010309278350516316,
+                "improvement": -0.0005691519635743214,
+                "verdict": "unchanged"
+              },
+              {
+                "metric": "brier",
+                "direction": "lower",
+                "baseline": 0.24504028850700335,
+                "candidate": 0.24533753772219077,
+                "delta": 0.00029724921518742287,
+                "relativeChange": 0.0012130626232874655,
+                "improvement": -0.00029724921518742287,
+                "verdict": "unchanged"
+              },
+              {
+                "metric": "calibrationError",
+                "direction": "lower",
+                "baseline": 0.008267193123930644,
+                "candidate": 0.009731155249376093,
+                "delta": 0.0014639621254454484,
+                "relativeChange": 0.17708091531184725,
+                "improvement": -0.0014639621254454484,
+                "verdict": "unchanged"
+              },
+              {
+                "metric": "logLoss",
+                "direction": "lower",
+                "baseline": 0.6831530906086426,
+                "candidate": 0.6837642260853745,
+                "delta": 0.0006111354767318611,
+                "relativeChange": 0.000894580563468404,
+                "improvement": -0.0006111354767318611,
+                "verdict": "unchanged"
+              },
+              {
+                "metric": "stabilityScore",
+                "direction": "higher",
+                "baseline": 0.8088902256295003,
+                "candidate": 0.8089547025892477,
+                "delta": 0.00006447695974742818,
+                "relativeChange": 0.00007971039543375674,
+                "improvement": 0.00006447695974742818,
+                "verdict": "unchanged"
+              }
+            ],
+            "improvements": [],
+            "regressions": [],
+            "unchanged": [
+              "accuracy",
+              "brier",
+              "calibrationError",
+              "logLoss",
+              "stabilityScore"
+            ]
+          },
+          "regressionAlerts": []
+        },
+        "autoPromote": false,
+        "recommendation": "keep-current",
+        "rationale": [
+          "Primary metric \"brier\" change (-0.0003) is within noise (< 0.002); no superiority claim."
+        ]
+      }
+    },
+    "bestCandidate": null,
+    "promotedAutomatically": false
+  }
+}

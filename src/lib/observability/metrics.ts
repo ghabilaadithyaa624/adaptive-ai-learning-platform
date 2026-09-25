@@ -279,9 +279,58 @@ export const metrics = {
     new Counter("adaptiq_model_training_total", "Model training runs.", ["model", "verdict"]),
   ),
 
+  // ---- ML: registry fallback (serving a heuristic instead of the trained model) ----
+  //
+  // Naming: the platform prefixes every series with `adaptiq_`, so the
+  // requested `ml_model_fallback_total` is registered as
+  // `adaptiq_ml_model_fallback_total`. Alert rules should match the suffix.
+  //
+  // Labels are operational only — model name, model version (or "unknown"), and
+  // a closed set of failure categories. Never a learner, question, tenant or
+  // any free-text error message: this series is scraped and retained widely.
+  mlModelFallbackTotal: registry.register(
+    new Counter(
+      "adaptiq_ml_model_fallback_total",
+      "Times a model load fell back to the built-in heuristic model.",
+      ["model", "version", "category"],
+    ),
+  ),
+  /** 1 while traffic is being served by a fallback model, 0 once recovered. */
+  mlModelFallbackActive: registry.register(
+    new Gauge(
+      "adaptiq_ml_model_fallback_active",
+      "Whether the most recent load of this model fell back (1) or served the registered model (0).",
+      ["model"],
+    ),
+  ),
+  /** Unix seconds of the *first* load in the current fallback streak; 0 when healthy. */
+  mlModelFallbackSince: registry.register(
+    new Gauge(
+      "adaptiq_ml_model_fallback_since_timestamp_seconds",
+      "Start of the current fallback streak as a Unix timestamp; 0 when the registered model is serving.",
+      ["model"],
+    ),
+  ),
+
   // ---- Authentication ----
   authEventsTotal: registry.register(
     new Counter("adaptiq_auth_events_total", "Authentication events.", ["action", "outcome"]),
+  ),
+
+  // ---- Persistence boundaries (JSONB runtime validation) ----
+  persistedPayloadReadsTotal: registry.register(
+    new Counter(
+      "adaptiq_persisted_payload_reads_total",
+      "Persisted JSON payloads parsed at a database boundary, by parse outcome.",
+      ["boundary", "status"],
+    ),
+  ),
+  persistedPayloadRejectionsTotal: registry.register(
+    new Counter(
+      "adaptiq_persisted_payload_rejections_total",
+      "Persisted JSON payloads rejected as malformed or unsupported.",
+      ["boundary", "status", "code"],
+    ),
   ),
 
   // ---- Errors ----

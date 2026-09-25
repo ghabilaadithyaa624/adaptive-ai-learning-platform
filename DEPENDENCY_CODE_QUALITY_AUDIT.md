@@ -66,9 +66,15 @@ Recommended follow-up: add narrow runtime parsers at registry and experiment row
 
 `loadClassifierUncached` catches every database/deserialization failure and returns the heuristic model without logging why. Availability is preserved, but operators may unknowingly serve a fallback model. Add a rate-limited structured warning and fallback metric while preserving current behavior. This was not changed because observability semantics should be reviewed rather than altered incidentally.
 
-### P2 — Deprecated Next middleware convention
+### P2 — Deprecated Next middleware convention — ✅ RESOLVED
 
-The production build warns that `src/middleware.ts` is deprecated in favor of the `proxy` convention. It still compiles and works under Next 16.3.6. Plan the official codemod and rerun authentication, authorization, tenant isolation, and API tests before migration; a filename/function change at this boundary is not a cosmetic cleanup.
+~~The production build warns that `src/middleware.ts` is deprecated in favor of the `proxy` convention.~~ Migrated: `src/middleware.ts` → `src/proxy.ts`, export `middleware` → `proxy` (Next 16 resolves `mod.proxy ?? mod.default` for this file and hard-errors if both conventions are present).
+
+Worth recording for anyone re-reading the original finding: this boundary carries **no** authentication or authorization. The file only attaches a per-request CSP nonce; auth gating lives in `lib/auth`, `lib/api`, `lib/authz` and `lib/page-guards`. The migration was therefore a rename, verified rather than assumed:
+
+- `tests/fixtures/edge-headers.golden.json` was captured from the pre-migration module and is asserted byte-for-byte against the post-migration one (`tests/unit/proxy-edge.test.ts`).
+- `tests/unit/security-matrix.test.ts` runs the 14-scenario security matrix against the real auth/authz code with a faked database, so it executes even where the DB-backed suites skip.
+- Build artifact check: `.next/server/functions-config-manifest.json` registers the proxy with an identical matcher `originalSource`.
 
 ### P2 — Unsafe/narrowing casts
 
@@ -118,7 +124,7 @@ They are interactive administration/editor surfaces and therefore legitimately c
 
 1. **Monitor/resolve the Drizzle Kit nested esbuild advisory**; preserve development-only controls and do not use `npm audit fix --force`.
 2. **Add runtime schemas for persisted model/experiment JSON** and structured fallback telemetry.
-3. **Migrate deprecated middleware to proxy** with the full security/tenant test matrix.
+3. ~~**Migrate deprecated middleware to proxy** with the full security/tenant test matrix.~~ Done — see P2 above.
 4. **Make embedded-postgres tooling reproducible** through a documented bootstrap or reviewed pinned dev dependency.
 5. **Measure route-level client chunks** before splitting large admin components.
 6. **Review React 19.3 compatibility** in a dedicated dependency update rather than mixing it into this audit.
