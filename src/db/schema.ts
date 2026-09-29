@@ -212,6 +212,44 @@ export const assessmentItems = pgTable("assessment_items", {
   index("assessment_items_question_idx").on(t.questionId),
 ]);
 
+/**
+ * Immutable decision-time record. This is deliberately separate from
+ * assessment_items: grading may update the latter, while this row must remain
+ * an exact snapshot of what was known before the learner answered.
+ */
+export const adaptiveDecisions = pgTable("adaptive_decisions", {
+  id: serial("id").primaryKey(),
+  assessmentId: integer("assessment_id").references(() => assessments.id, { onDelete: "cascade" }).notNull(),
+  assessmentItemId: integer("assessment_item_id").references(() => assessmentItems.id, { onDelete: "cascade" }).notNull(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  institutionId: integer("institution_id").references(() => institutions.id, { onDelete: "set null" }),
+  sessionKey: text("session_key").notNull(),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "set null" }),
+  subskill: text("subskill"),
+  masteryBefore: real("mastery_before").notNull(),
+  uncertaintyBefore: real("uncertainty_before").notNull(),
+  retentionBefore: real("retention_before").notNull(),
+  rawProbability: real("raw_probability").notNull(),
+  calibratedProbability: real("calibrated_probability").notNull(),
+  questionDifficulty: real("question_difficulty").notNull(),
+  questionDiscrimination: real("question_discrimination").notNull(),
+  bloomLevel: text("bloom_level").notNull(),
+  policyVersion: text("policy_version").notNull(),
+  calibrationVersion: text("calibration_version"),
+  bktVersion: text("bkt_version").notNull(),
+  experimentId: integer("experiment_id"),
+  experimentVariant: text("experiment_variant"),
+  coldStart: boolean("cold_start").notNull().default(false),
+  selectionReason: text("selection_reason").notNull(),
+  candidateSetMetadata: jsonb("candidate_set_metadata").$type<Record<string, unknown>>().notNull().default({}),
+  decisionSnapshot: jsonb("decision_snapshot").$type<Record<string, unknown>>().notNull().default({}),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("adaptive_decisions_item_idx").on(t.assessmentItemId),
+  index("adaptive_decisions_student_time_idx").on(t.studentId, t.decidedAt),
+  index("adaptive_decisions_policy_idx").on(t.policyVersion, t.decidedAt),
+]);
+
 /* ------------------------------------------------------------------ */
 /* Knowledge tracing state                                             */
 /* ------------------------------------------------------------------ */
