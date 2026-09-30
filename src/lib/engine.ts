@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   activityEvents,
+  adaptiveDecisions,
   assessmentItems,
   assessments,
   masteryStates,
@@ -309,6 +310,7 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
     variantKey: string;
     configFingerprint: string;
   } | null = null;
+  let ownerInstitutionId: number | null = null;
   let strategy = getSelectionStrategy(policyId);
   let servingPolicyId: string = policyId;
 
@@ -320,8 +322,9 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
       .from(users)
       .where(eq(users.id, assessment.studentId))
       .limit(1);
+    ownerInstitutionId = owner?.institutionId ?? null;
     const decisions = await assignLearnerToActiveExperiments({
-      scope: { institutionId: owner?.institutionId ?? null },
+      scope: { institutionId: ownerInstitutionId },
       studentId: assessment.studentId,
       now: new Date(),
     });
@@ -391,20 +394,75 @@ export async function computeNextSessionQuestion(assessmentId: number): Promise<
   const chosenMastery = assessment.mode === "diagnostic" && !stateBySkill.has(chosen.candidate.skillId)
     ? 0.5
     : masteryForSkill(chosen.candidate.skillId);
-  const [item] = await db
-    .insert(assessmentItems)
-    .values({
+  const selectedSkill = learnerState.skills.get(chosen.candidate.skillId);
+  const rawProbability = predictProbability(
+    model,
+    buildSample({
+      ability: learnerState.ability,
+      mastery: chosenMastery,
+      difficultyBase: chosen.candidate.item.difficulty,
+      bloom: chosen.candidate.item.bloom,
+      // At decision time response time is unknown; use the item's expected time.
+      responseTimeMs: chosen.candidate.item.expectedTimeMs ?? 60_000,
+      skillAccuracy: selectedSkill?.accuracy ?? 0.5,
+      evidence: selectedSkill?.confidence ?? 0,
+    }),
+  );
+  const calibratedProbability = chosen.predictedCorrect;
+  const decision = chosen.decision ?? null;
+
+  // The item and its immutable pre-response evidence are committed together.
+  // A served item without a decision record is not scientifically attributable.
+  const [item] = await db.transaction(async (tx) => {
+    const [created] = await tx
+      .insert(assessmentItems)
+      .values({
+        assessmentId,
+        questionId: chosen.candidate.questionId,
+        skillId: chosen.candidate.skillId,
+        sequence: answered.length + 1,
+        predictedCorrectProb: round(calibratedProbability, 3),
+        assignedDifficulty: round(chosen.candidate.item.difficulty, 3),
+        masteryBefore: round(chosenMastery, 3),
+        masteryAfter: round(chosenMastery, 3),
+        responseTimeMs: 0,
+      })
+      .returning();
+
+    await tx.insert(adaptiveDecisions).values({
       assessmentId,
-      questionId: chosen.candidate.questionId,
+      assessmentItemId: created.id,
+      studentId: assessment.studentId,
+      institutionId: ownerInstitutionId,
+      sessionKey: `assessment:${assessmentId}`,
       skillId: chosen.candidate.skillId,
-      sequence: answered.length + 1,
-      predictedCorrectProb: round(chosen.predictedCorrect, 3),
-      assignedDifficulty: round(chosen.candidate.item.difficulty, 3),
+      subskill: chosen.candidate.item.subskill ?? null,
       masteryBefore: round(chosenMastery, 3),
-      masteryAfter: round(chosenMastery, 3),
-      responseTimeMs: 0,
-    })
-    .returning();
+      uncertaintyBefore: round(selectedSkill?.uncertainty ?? 1, 3),
+      retentionBefore: round(selectedSkill?.retention ?? 1, 3),
+      rawProbability: round(rawProbability, 3),
+      calibratedProbability: round(calibratedProbability, 3),
+      questionDifficulty: round(chosen.candidate.item.difficulty, 3),
+      questionDiscrimination: round(questionRow?.question.discrimination ?? 0, 3),
+      bloomLevel: questionRow?.question.bloomLevel ?? "apply",
+      policyVersion: decision?.policyVersion ?? servingPolicyId,
+      calibrationVersion: model.calibration?.version ?? null,
+      bktVersion: bktModel.id,
+      experimentId: experimentArm?.experimentId ?? null,
+      experimentVariant: experimentArm?.variantKey ?? null,
+      coldStart: assessment.mode === "diagnostic" && answered.length === 0,
+      selectionReason: chosen.explanation,
+      candidateSetMetadata: {
+        candidatesConsidered: candidates.length,
+        candidatesFiltered: adaptiveResult?.excluded ?? 0,
+        targetSkillCount: targetSkillIds.length,
+      },
+      // A plain object copy intentionally snapshots only the typed explanation;
+      // no post-response object is attached to this immutable record.
+      decisionSnapshot: decision ? { ...decision } : {},
+    });
+    return [created] as const;
+  });
 
   // Exposure is recorded only once an item actually exists, and is keyed to it.
   // That join is what lets attribution credit this learner's outcome to this
